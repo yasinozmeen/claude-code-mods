@@ -2,8 +2,8 @@ import type { ClientModule } from 'claude-code'
 
 export type HitProps = { columns: number; rows: number }
 
-// A pointer post's `mods` is a bit set: 1 alt, 2 ctrl, 8 shift (cmd never
-// arrives: the terminal keeps it).
+// A pointer post's `mods` is a bit set: 1 alt, 2 ctrl (cmd and shift never
+// arrive: the terminal keeps them, shift for selecting text).
 export type HitPost =
   | { kind: 'size'; columns: number; rows: number }
   | { kind: 'down' | 'move' | 'up'; x: number; y: number; mods: number }
@@ -28,7 +28,7 @@ const Hit: ClientModule<HitProps, HitState> = (props, surface) => {
   }
 
   surface.onPointer(event => {
-    const mods = (event.alt === true ? 1 : 0) | (event.ctrl === true ? 2 : 0) | (event.shift === true ? 8 : 0)
+    const mods = (event.alt === true ? 1 : 0) | (event.ctrl === true ? 2 : 0)
     const isInside = event.x >= 0 && event.y >= 0 && event.x < props.columns && event.y < props.rows
     const at = (cell: number, fine: number | undefined, cells: number) =>
       Math.max(0, Math.min(1, (fine ?? cell + 0.5) / cells))

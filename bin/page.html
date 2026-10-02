@@ -82,7 +82,6 @@
       <button data-mode="chat" aria-pressed="true">Sohbet</button>
       <button data-mode="all" aria-pressed="false">Hepsi</button>
     </div>
-    <button class="act" id="grow">Genişlet</button>
   </header>
   <div id="stage"></div>
   <div id="meta"></div>
@@ -114,7 +113,6 @@ const chips = document.getElementById('chips')
 const empty = document.getElementById('empty')
 const copy = document.getElementById('copy')
 const single = document.getElementById('single')
-const grow = document.getElementById('grow')
 const clear = document.getElementById('clear')
 let items = []
 let mode = 'chat'
@@ -126,9 +124,8 @@ let staged = ''
 let picked = 0
 let target = 0
 let position = 0
-// The modifier keys the pane last reported: 1 alt, 2 ctrl, 8 shift.
+// The modifier keys the pane last reported: 1 alt, 2 ctrl.
 let mods = 0
-let isWide = false
 
 const src = (item, as) => `/file?id=${item.id}${as ? `&as=${as}` : ''}`
 const shown = () => (mode === 'chat' ? items.filter(one => one.from === 'chat') : items)
@@ -157,8 +154,8 @@ function nodeFor(item) {
   return Object.assign(new Image(), { src: picture(item) })
 }
 
-// Two pictures, one over the other: the second shows right of the divider,
-// which follows the pointer while it is pressed.
+// Two pictures in one box: the first shows left of the divider and the
+// second right of it, and the divider follows the pointer while pressed.
 function slider(first, other) {
   const box = Object.assign(document.createElement('div'), { className: 'slide' })
   const under = Object.assign(new Image(), { src: picture(first), draggable: false })
@@ -173,6 +170,9 @@ function slider(first, other) {
 
   const place = share => {
     const at = Math.max(0, Math.min(1, share))
+    // Each picture is cut at the divider, so one of another shape does not
+    // show through beside the other.
+    under.style.clipPath = `inset(0 ${(1 - at) * 100}% 0 0)`
     over.style.clipPath = `inset(0 0 0 ${at * 100}%)`
     bar.style.left = `${at * 100}%`
   }
@@ -300,7 +300,7 @@ function draw() {
       const name = Object.assign(document.createElement('div'), { className: 'name', textContent: item.name })
       card.append(thumb, name)
       card.addEventListener('click', () => {
-        const isSecond = mods !== 0
+        const isSecond = (mods & 3) !== 0
         choose(item.id, isSecond)
 
         if (!isSecond) {
@@ -404,12 +404,6 @@ chips.addEventListener('click', event => {
 clear.addEventListener('click', () => void act({ act: 'clear' }))
 single.addEventListener('click', () => choose(current, false))
 
-grow.addEventListener('click', () => {
-  isWide = !isWide
-  grow.textContent = isWide ? 'Daralt' : 'Genişlet'
-  void act({ act: 'grow' })
-})
-
 actions.addEventListener('click', event => {
   const button = event.target.closest('[data-act]')
 
@@ -439,12 +433,18 @@ addEventListener('wheel', event => {
   nudge(event.deltaY)
 }, { passive: false })
 
-function ease() {
+// Eased by the clock, not by the frame: a slow frame moves further, so the
+// scroll takes the same time however fast the page is being sent.
+let eased = performance.now()
+
+function ease(now) {
   const most = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+  const share = 1 - Math.exp(-(now - eased) / 70)
+  eased = now
   target = Math.min(target, most)
 
   if (Math.abs(target - position) > 0.4) {
-    position += (target - position) * 0.22
+    position += (target - position) * share
     scroller.scrollTop = position
   }
 

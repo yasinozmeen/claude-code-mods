@@ -18,6 +18,8 @@ import { fileURLToPath } from 'node:url'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const frames = process.argv[2] ?? path.join(os.tmpdir(), 'vitrin')
 const ROTATE = 16
+// The most pixels the page is drawn at: what keeps a scroll even.
+const PIXELS = 2_600_000
 const BROWSERS = [
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
@@ -74,7 +76,53 @@ async function resize() {
   })
   await send('Runtime.evaluate', { expression: `document.documentElement.style.zoom = ${state.scale}` })
   await send('Page.stopScreencast')
-  await send('Page.startScreencast', { format: 'png', everyNthFrame: 1 })
+  await cast()
+}
+
+// Encoding a frame takes time in step with its pixels, so a page in motion
+// (a scroll, a drag, a playing video) is sent at half size and looks soft
+// while it moves; once it rests, one full-size frame makes it sharp again.
+const MOTION = { gapMs: 250, restMs: 350, settleMs: 500 }
+let pace = 'sharp'
+let rest
+let lastFrame = 0
+// Until when frames are the sharp one arriving, not motion.
+let settled = 0
+
+function cast() {
+  const share = pace === 'fast' ? 0.5 : 1
+
+  return send('Page.startScreencast', {
+    format: 'png',
+    everyNthFrame: 1,
+    maxWidth: Math.round(state.width * state.scale * share),
+    maxHeight: Math.round(state.height * state.scale * share),
+  })
+}
+
+async function repace(next) {
+  if (pace !== next) {
+    pace = next
+    await send('Page.stopScreencast')
+    await cast()
+  }
+}
+
+// Two frames close together are motion; none for a while is rest.
+function paced() {
+  const now = Date.now()
+  const isMoving = now - lastFrame < MOTION.gapMs && now > settled
+  lastFrame = now
+  clearTimeout(rest)
+
+  if (pace === 'sharp' && isMoving) {
+    void repace('fast')
+  } else if (pace === 'fast') {
+    rest = setTimeout(() => {
+      settled = Date.now() + MOTION.settleMs
+      void repace('sharp')
+    }, MOTION.restMs)
+  }
 }
 
 function body(req) {
@@ -205,6 +253,9 @@ const server = http.createServer(async (req, res) => {
     if (width > 50 && height > 50) {
       state.width = width
       state.height = height
+      // Sharp at two pixels a point while the pane is small; a large pane is
+      // drawn coarser, since the browser's work grows with its pixels.
+      state.scale = Math.max(1, Math.min(2, Math.sqrt(PIXELS / (width * height))))
     }
 
     // Asked again at the same size, the page is still sent afresh: a pane
@@ -283,6 +334,7 @@ async function start(port) {
     } else if (message.method === 'Page.screencastFrame') {
       void send('Page.screencastFrameAck', { sessionId: message.params.sessionId })
       seq += 1
+      paced()
       const file = path.join(frames, `f${seq % ROTATE}.png`)
       // Written beside and moved in, so the terminal never reads half a frame.
       fs.writeFileSync(`${file}.tmp`, Buffer.from(message.params.data, 'base64'))

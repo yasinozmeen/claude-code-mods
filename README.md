@@ -14,9 +14,9 @@ iletilir. Bu sayede kaydırma akıcıdır ve video panelin içinde sesli oynar.
 - `Sohbet` yalnızca cevaplarda geçen medyayı, `Hepsi` araçların ürettiklerini de gösterir.
 - `Büyüt` Finder'ın boşluk tuşu önizlemesini, `Aç` varsayılan uygulamayı açar.
 - Panele bir kez tıkladıktan sonra ok tuşları medyalar arasında gezdirir, boşluk ya da Enter seçili medyayı büyütür.
-- `shift`, `ctrl` ya da `option` ile ikinci bir medyaya tıklamak ikisini karşılaştırır: iki resimde sürüklenen bir ayırıcı, diğerlerinde yan yana.
+- `ctrl` ya da `option` ile ikinci bir medyaya tıklamak ikisini karşılaştırır: iki resimde sürüklenen bir ayırıcı, diğerlerinde yan yana.
 - Sürükleme sayfaya iletilir: videonun ilerleme çubuğu kaydırılabilir.
-- `Genişlet` paneli genişletmeyi ister; elle sürüklenmiş bir genişlik varsa terminal onu korur.
+- Sayfa hareket ederken (kaydırma, sürükleme, oynayan video) kareler yarı çözünürlükte gönderilir; durunca netleşir.
 - `ctrl` ya da `option` basılıyken `Yolu kopyala` düğmesi `Dizini aç` olur: dosyayı Finder'da gösterir.
 
 | Komut | Ne yapar |
