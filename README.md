@@ -6,8 +6,6 @@ sayfalarını terminalden çıkmadan sağdaki panelde gösterir.
 
 https://github.com/user-attachments/assets/5ca8d5c2-73b8-4fbf-bb05-477b76b44e5b
 
-**[Tanıtım videosunu izle](docs/vitrin-tanitim.mp4)** (67 saniye, sesli)
-
 Panel canlı bir web sayfasıdır: görünmeyen bir tarayıcı sayfayı çizer, her
 kare terminale resim olarak akıtılır, tıklama ve kaydırma sayfaya geri
 iletilir. Bu sayede kaydırma akıcıdır ve video panelin içinde sesli oynar.
