@@ -1,0 +1,6 @@
+{
+  "name": "medya-paneli",
+  "version": "0.1.0",
+  "description": "Claude'un gönderdiği resim, video ve PDF'leri terminalden çıkmadan sağdaki panelde gösterir",
+  "types": "./types/index.d.ts"
+}
