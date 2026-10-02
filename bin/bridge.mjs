@@ -126,6 +126,49 @@ function serve(req, res, url) {
   fs.createReadStream(file, { start, end }).pipe(res)
 }
 
+let inputs = Promise.resolve()
+let isDown = false
+
+// Plays one thing the pane heard into the page. The modifier keys are told
+// to the page itself rather than given to the browser's mouse event, where
+// ctrl with a click is a context menu.
+async function play(sent) {
+  const x = Math.round(Number(sent.x) * state.width * state.scale)
+  const y = Math.round(Number(sent.y) * state.height * state.scale)
+  const left = { x, y, button: 'left', buttons: 1, clickCount: 1 }
+
+  // What reached the page, for telling a key the terminal kept from one the
+  // page ignored; drags and wheel steps would only fill it.
+  if (sent.kind !== 'move' && sent.kind !== 'wheel') {
+    fs.appendFileSync(path.join(frames, 'input.log'), `${new Date().toISOString()} ${JSON.stringify(sent)}\n`)
+  }
+
+  if (sent.mods !== undefined) {
+    await send('Runtime.evaluate', { expression: `hold(${Number(sent.mods) || 0})` })
+  }
+
+  if (sent.kind === 'down') {
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...left })
+    isDown = true
+  } else if (sent.kind === 'move' && isDown) {
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...left })
+  } else if (sent.kind === 'up') {
+    // A press and release within one frame arrive as the release alone.
+    if (!isDown) {
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...left })
+    }
+
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...left, buttons: 0 })
+    isDown = false
+  } else if (sent.kind === 'wheel') {
+    await send('Runtime.evaluate', { expression: `nudge(${Number(sent.dy) || 0})` })
+  } else if (sent.kind === 'key') {
+    await send('Runtime.evaluate', { expression: `key(${JSON.stringify(String(sent.key))})` })
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', 'http://127.0.0.1')
 
@@ -170,23 +213,10 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(204).end()
   } else if (req.method === 'POST' && url.pathname === '/input') {
     const sent = await body(req)
-    fs.appendFileSync(path.join(frames, 'input.log'), `${new Date().toISOString()} ${JSON.stringify(sent)}\n`)
-    const x = Math.round(Number(sent.x) * state.width * state.scale)
-    const y = Math.round(Number(sent.y) * state.height * state.scale)
-
-    if (sent.kind === 'held' || sent.kind === 'click') {
-      await send('Runtime.evaluate', { expression: `hold(${sent.isHeld === true})` })
-    }
-
-    if (sent.kind === 'click') {
-      const press = { x, y, button: 'left', clickCount: 1 }
-      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
-      await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...press })
-      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...press })
-    } else if (sent.kind === 'wheel') {
-      await send('Runtime.evaluate', { expression: `nudge(${Number(sent.dy) || 0})` })
-    }
-
+    // One at a time, in the order they came: a press must reach the page
+    // before the drag and the release that follow it.
+    inputs = inputs.then(() => play(sent))
+    await inputs
     res.writeHead(204).end()
   } else if (req.method === 'POST' && url.pathname === '/act') {
     say(`ACT ${JSON.stringify(await body(req))}`)

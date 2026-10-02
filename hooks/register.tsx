@@ -18,8 +18,11 @@ const FRESH_MS = 2000
 const PER_CALL = 8
 // The longest reply the mod redraws to make its paths pressable.
 const REPLY_MAX = 9000
-// The points a column is wide when the page is laid out, the pixels a wheel
-// step moves it, and where node may be.
+// The columns the pane asks for, narrow and wide; the points a column is wide
+// when the page is laid out, the pixels a wheel step moves it, and where node
+// may be.
+const NARROW = 64
+const WIDE = 110
 const CELL_POINTS = 9
 const WHEEL_PIXELS = 48
 const NODES = ['node', '/opt/homebrew/opt/node@22/bin/node', '/opt/homebrew/bin/node', '/usr/local/bin/node']
@@ -37,7 +40,7 @@ const place = { home: '', cwd: '' }
 // The bridge as this module knows it: its port once it listens, the newest
 // frame, the pane's size in cells, the key the picture is drawn under, and
 // a file the page has yet to be told to show.
-const web = { port: 0, isStarting: false, file: '', seq: 0, columns: 0, rows: 0, key: 'view', pick: '' }
+const web = { port: 0, isStarting: false, file: '', seq: 0, columns: 0, rows: 0, key: 'view', pick: '', isWide: false }
 
 // Every string a tool call's input holds, a few levels down.
 function strings(value: unknown, depth = 3): string[] {
@@ -227,6 +230,14 @@ async function act($: EngineInterface, sent: Act) {
     return
   }
 
+  // A request the surface may decline: a width the person dragged wins.
+  if (sent.act === 'grow') {
+    web.isWide = !web.isWide
+    await $.ui.open({ id: PANE, title: TITLE, columns: web.isWide ? WIDE : NARROW })
+
+    return
+  }
+
   const item = (await read($, items)).find(one => one.id === sent.id)
 
   if (item === undefined) {
@@ -311,7 +322,7 @@ async function stream($: EngineInterface) {
 // Opens the pane and starts the page behind it; where the terminal is too
 // narrow for a pane nobody asked for, a toast says how to open it.
 async function show($: EngineInterface) {
-  const opened = await $.ui.open({ id: PANE, title: TITLE, columns: 64 })
+  const opened = await $.ui.open({ id: PANE, title: TITLE, columns: web.isWide ? WIDE : NARROW })
 
   if (opened.isPlaced) {
     void stream($)
@@ -543,7 +554,7 @@ export const register: Register = on => {
       return { text: `Sayfanın en-boy düzeltmesi ${value} yapıldı.` }
     }
 
-    await $.ui.open({ id: PANE, title: TITLE, columns: 64 })
+    await $.ui.open({ id: PANE, title: TITLE, columns: web.isWide ? WIDE : NARROW })
     void stream($)
 
     if (args === '') {
@@ -575,7 +586,7 @@ export const register: Register = on => {
       web.columns = sent.columns
       web.rows = sent.rows
       await measure($)
-    } else if (sent?.kind === 'click' || sent?.kind === 'held') {
+    } else if (sent !== undefined) {
       await tell($, 'input', sent)
     }
 

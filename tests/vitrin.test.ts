@@ -143,7 +143,11 @@ test('media reaches the page behind the pane; its buttons and a pressed path act
 
   // A click in the pane is played into the page.
   await ui.pointer({ type: 'up', x: 30, y: 20, button: 'left', in: 'hit' })
-  expect(posts.some(one => one.route === '/input' && one.body.kind === 'click')).toBe(true)
+  expect(posts.some(one => one.route === '/input' && one.body.kind === 'up')).toBe(true)
+
+  // So is a key, once the region has the keyboard.
+  await ui.key({ key: 'right', in: 'hit' })
+  expect(posts.some(one => one.route === '/input' && one.body.kind === 'key' && one.body.key === 'right')).toBe(true)
   expect(await ui.find({ type: 'Image' })).toBeDefined()
 
   stop()
