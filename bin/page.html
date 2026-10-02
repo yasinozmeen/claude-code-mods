@@ -89,6 +89,7 @@
     <button class="act main" data-act="look">Büyüt</button>
     <button class="act" data-act="open">Aç</button>
     <button class="act" data-act="copy" id="copy">Yolu kopyala</button>
+    <button class="act quiet" id="layout" hidden></button>
     <button class="act quiet" id="single" hidden>Karşılaştırmayı kapat</button>
   </div>
   <div id="grid"></div>
@@ -113,12 +114,16 @@ const chips = document.getElementById('chips')
 const empty = document.getElementById('empty')
 const copy = document.getElementById('copy')
 const single = document.getElementById('single')
+const layout = document.getElementById('layout')
 const clear = document.getElementById('clear')
 let items = []
 let mode = 'chat'
 let current = null
 // The file compared with the current one, when there is one.
 let second = null
+// How the pair is laid out when the person chose: 'slide' or 'pair'; null
+// leaves it to the pictures' shapes.
+let chosen = null
 let drawn = ''
 let staged = ''
 let picked = 0
@@ -132,6 +137,10 @@ const shown = () => (mode === 'chat' ? items.filter(one => one.from === 'chat') 
 const byId = id => items.find(one => one.id === id)
 const clock = ms => new Date(ms).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
 const isPicture = item => item.kind === 'image' || item.kind === 'pdf'
+// Two pictures of one shape are a before and an after: those are laid one
+// over the other. Pictures of different shapes would each show in pieces
+// there, so they stand side by side, as every other kind does.
+const isSameShape = (a, b) => a.height > 0 && b.height > 0 && Math.abs(a.width / a.height - b.width / b.height) < 0.03
 // What a browser cannot draw itself is shown as its prepared preview.
 const picture = item => src(item, item.kind === 'pdf' || /\.(heic|tiff?|bmp)$/i.test(item.path) ? 'preview' : '')
 
@@ -219,7 +228,9 @@ function show() {
     return
   }
 
-  const key = `${item.id}|${other?.id ?? ''}`
+  const canSlide = other !== undefined && isPicture(item) && isPicture(other)
+  const isSlide = canSlide && (chosen ?? (isSameShape(item, other) ? 'slide' : 'pair')) === 'slide'
+  const key = `${item.id}|${other?.id ?? ''}|${isSlide}`
 
   if (key !== staged) {
     staged = key
@@ -227,9 +238,13 @@ function show() {
     if (other === undefined) {
       stage.replaceChildren(nodeFor(item))
     } else {
-      stage.replaceChildren(isPicture(item) && isPicture(other) ? slider(item, other) : pair(item, other))
+      stage.replaceChildren(isSlide ? slider(item, other) : pair(item, other))
     }
   }
+
+  layout.hidden = !canSlide
+  layout.textContent = isSlide ? 'Yan yana göster' : 'Üst üste göster'
+  layout.dataset.next = isSlide ? 'pair' : 'slide'
 
   const detail = other === undefined
     ? `${LABEL[item.kind] ?? ''} · ${clock(item.addedAt)} · ${item.from === 'chat' ? 'sohbet' : 'araç'}`
@@ -243,6 +258,8 @@ function show() {
 }
 
 function choose(id, isSecond) {
+  chosen = null
+
   if (isSecond && current !== null && id !== current) {
     second = second === id ? null : id
   } else {
@@ -403,6 +420,10 @@ chips.addEventListener('click', event => {
 
 clear.addEventListener('click', () => void act({ act: 'clear' }))
 single.addEventListener('click', () => choose(current, false))
+layout.addEventListener('click', () => {
+  chosen = layout.dataset.next
+  show()
+})
 
 actions.addEventListener('click', event => {
   const button = event.target.closest('[data-act]')
