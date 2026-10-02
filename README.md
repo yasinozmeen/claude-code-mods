@@ -30,18 +30,26 @@ iletilir. Bu sayede kaydırma akıcıdır ve video panelin içinde sesli oynar.
 
 ## Kurulum
 
-Gerekenler: macOS, Ghostty ya da kitty (resim çizebilen terminal), Node 22+,
-Chrome ya da Brave, ffmpeg.
+Gerekenler: macOS, Ghostty ya da kitty (resim çizebilen bir terminal; tmux
+içinde çalışmaz), Claude Code 2.1.287+, Node 22+, Chrome ya da Brave, ffmpeg,
+Xcode komut satırı araçları (`swiftc`).
 
 ```sh
+git clone https://github.com/yasinozmeen/vitrin.git ~/vitrin
+cd ~/vitrin
 swiftc -O bin/onizle.swift -o bin/onizle
 ```
 
-Ardından `~/.claude/settings.json` içindeki `env` bölümüne:
+Ardından `~/.claude/settings.json` içindeki `env` bölümüne klasörün tam yolunu ekle:
 
 ```json
-"CLAUDE_CODE_PLUGIN_DIRS": "/Users/yasin/vitrin"
+"CLAUDE_CODE_PLUGIN_DIRS": "/Users/<kullanıcı adın>/vitrin"
 ```
+
+Yeni bir Claude Code oturumu aç ve `/vitrin` yaz.
+
+Claude Code'un mod (function hooks) arayüzü erken erişimde; sürümler arasında
+değişebilir.
 
 ## Geliştirme
 
@@ -60,3 +68,7 @@ claude plugin test .
 | `bin/onizle.swift` | `Büyüt` için Finder önizlemesi |
 
 İlk commit, panelin yalnızca terminal öğeleriyle çizilen ilk sürümüdür.
+
+## Lisans
+
+MIT
