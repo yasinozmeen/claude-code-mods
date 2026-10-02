@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Medya</title>
+<title>Vitrin</title>
 <style>
   :root {
     --bg: #1f2023; --panel: #292b30; --line: #3a3d44; --text: #e6e7ea; --dim: #9aa0aa; --accent: #8ab4f8;
@@ -16,7 +16,7 @@
   header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px;
     padding: 10px 0; background: var(--bg); border-bottom: 1px solid var(--line); }
   header b { font-size: 14px; }
-  header span { color: var(--dim); flex: 1; }
+  header span { color: var(--dim); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .chips { position: relative; display: flex; border: 1px solid var(--line); }
   .chips button { all: unset; position: relative; z-index: 1; padding: 4px 12px; cursor: pointer; color: var(--dim);
     transition: color .2s var(--ease); }
@@ -24,14 +24,21 @@
   .chips i { position: absolute; top: 0; bottom: 0; left: 0; width: 50%; background: var(--accent);
     transition: transform .22s var(--ease); }
   .chips[data-mode="all"] i { transform: translateX(100%); }
-  #stage { margin: 12px 0 6px; background: #121316; border: 1px solid var(--line); display: grid; place-items: center;
-    min-height: 120px; transition: height .25s var(--ease); overflow: hidden; }
+  .act { all: unset; padding: 4px 12px; border: 1px solid var(--line); color: var(--text); cursor: pointer;
+    white-space: nowrap; transition: border-color .18s var(--ease), background .18s var(--ease), color .18s var(--ease); }
+  .act:hover { border-color: var(--dim); }
+  .act:active { background: var(--panel); }
+  .act.main { border-color: var(--accent); color: var(--accent); }
+  .act.quiet { color: var(--dim); }
+  #stage { margin: 12px 0 8px; background: #121316; border: 1px solid var(--line); display: grid; place-items: center;
+    min-height: 120px; overflow: hidden; }
   #stage > * { max-width: 100%; max-height: var(--tall, 420px); display: block; animation: in .25s var(--ease); }
   #stage iframe { width: 100%; height: var(--tall, 420px); border: 0; background: #fff; }
   #stage audio { width: 100%; margin: 28px 0; }
-  #meta { display: flex; gap: 10px; align-items: baseline; margin-bottom: 14px; }
+  #meta { display: flex; gap: 10px; align-items: baseline; margin-bottom: 8px; }
   #meta b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #meta span { color: var(--dim); white-space: nowrap; }
+  #actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
   #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
   .card { all: unset; cursor: pointer; display: block; border: 1px solid var(--line); background: var(--panel);
     transition: border-color .18s var(--ease), transform .18s var(--ease); animation: in .25s var(--ease); }
@@ -49,17 +56,23 @@
 <body>
 <div id="scroll">
   <header>
-    <b>Medya</b><span id="count"></span>
+    <b>Vitrin</b><span id="count"></span>
     <div class="chips" id="chips" data-mode="chat">
       <i></i>
       <button data-mode="chat" aria-pressed="true">Sohbet</button>
       <button data-mode="all" aria-pressed="false">Hepsi</button>
     </div>
+    <button class="act quiet" id="clear">Temizle</button>
   </header>
   <div id="stage"></div>
   <div id="meta"></div>
+  <div id="actions">
+    <button class="act main" data-act="look">Büyüt</button>
+    <button class="act" data-act="open">Aç</button>
+    <button class="act" data-act="copy">Yolu kopyala</button>
+  </div>
   <div id="grid"></div>
-  <div id="empty" hidden>Henüz medya yok.</div>
+  <div id="empty" hidden></div>
 </div>
 <script>
 document.documentElement.style.zoom = new URLSearchParams(location.search).get('zoom') ?? 1
@@ -67,15 +80,30 @@ const LABEL = { image: 'resim', video: 'video', audio: 'ses', pdf: 'PDF', page: 
 const scroller = document.getElementById('scroll')
 const stage = document.getElementById('stage')
 const meta = document.getElementById('meta')
+const actions = document.getElementById('actions')
 const grid = document.getElementById('grid')
 const chips = document.getElementById('chips')
+const empty = document.getElementById('empty')
 let items = []
 let mode = 'chat'
 let current = null
 let drawn = ''
+let picked = 0
+let target = 0
+let position = 0
 
 const src = (item, as) => `/file?id=${item.id}${as ? `&as=${as}` : ''}`
 const shown = () => (mode === 'chat' ? items.filter(one => one.from === 'chat') : items)
+const clock = ms => new Date(ms).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+
+// A button of the page the mod acts on: the bridge passes it along.
+const act = sent => fetch('/act', { method: 'POST', body: JSON.stringify(sent) })
+
+function mark() {
+  for (const card of grid.children) {
+    card.setAttribute('aria-current', String(card.dataset.id === current))
+  }
+}
 
 function show(item) {
   current = item.id
@@ -94,22 +122,23 @@ function show(item) {
   }
 
   stage.replaceChildren(node)
-  meta.innerHTML = ''
-  meta.append(
+  meta.replaceChildren(
     Object.assign(document.createElement('b'), { textContent: item.name }),
-    Object.assign(document.createElement('span'), { textContent: `${LABEL[item.kind] ?? ''} · ${item.from === 'chat' ? 'sohbet' : 'araç'}` }),
+    Object.assign(document.createElement('span'), {
+      textContent: `${LABEL[item.kind] ?? ''} · ${clock(item.addedAt)} · ${item.from === 'chat' ? 'sohbet' : 'araç'}`,
+    }),
   )
-
-  for (const card of grid.children) {
-    card.setAttribute('aria-current', String(card.dataset.id === item.id))
-  }
+  mark()
 }
 
 function draw() {
   const list = shown()
   document.getElementById('count').textContent = `${list.length} dosya`
-  document.getElementById('empty').hidden = list.length > 0
-  stage.hidden = meta.hidden = list.length === 0
+  empty.hidden = list.length > 0
+  empty.textContent = items.length > 0
+    ? `Sohbette gönderilen medya yok. Araçların ürettiği ${items.length} dosya Hepsi'nde.`
+    : 'Henüz medya yok. Claude bir resim, video, PDF ya da ses gönderdiğinde burada görünür.'
+  stage.hidden = meta.hidden = actions.hidden = list.length === 0
   chips.dataset.mode = mode
 
   for (const chip of chips.querySelectorAll('button')) {
@@ -135,24 +164,26 @@ function draw() {
     }))
   }
 
-  const picked = list.find(one => one.id === current) ?? list[0]
+  const one = list.find(item => item.id === current) ?? list[0]
 
-  if (picked !== undefined && (picked.id !== current || stage.childElementCount === 0)) {
-    show(picked)
-  } else if (picked !== undefined) {
-    for (const card of grid.children) {
-      card.setAttribute('aria-current', String(card.dataset.id === picked.id))
-    }
+  if (one !== undefined && (one.id !== current || stage.childElementCount === 0)) {
+    show(one)
+  } else {
+    mark()
   }
 }
 
 async function load() {
   const got = await (await fetch('/items')).json()
-  const isNewest = got.items[0]?.id !== items[0]?.id
   items = got.items
+  mode = got.filter
 
-  if (isNewest) {
-    current = null
+  // A file the mod asked for (a new one, or a path pressed in the chat) is
+  // shown once, in whichever view holds it.
+  if (got.pick.n !== picked) {
+    picked = got.pick.n
+    current = got.pick.id
+    stage.replaceChildren()
     target = 0
   }
 
@@ -162,19 +193,35 @@ async function load() {
 chips.addEventListener('click', event => {
   const next = event.target.dataset?.mode
 
-  if (next) {
+  if (next && next !== mode) {
     mode = next
     current = null
     draw()
+    void act({ act: 'filter', mode })
   }
 })
 
-// The wheel arrives in steps, a terminal's; the page eases toward where the
-// steps add up to, so what is streamed back moves evenly.
-let target = 0
-let position = 0
+document.getElementById('clear').addEventListener('click', () => void act({ act: 'clear' }))
+
+actions.addEventListener('click', event => {
+  const button = event.target.closest('[data-act]')
+
+  if (button === null || current === null) {
+    return
+  }
+
+  void act({ act: button.dataset.act, id: current })
+
+  if (button.dataset.act === 'copy') {
+    button.textContent = 'Kopyalandı'
+    setTimeout(() => (button.textContent = 'Yolu kopyala'), 1400)
+  }
+})
+
 // Called by the bridge for each wheel step: a wheel event of its own would
-// land in whatever is under the pointer, and an embedded page keeps it.
+// land in whatever is under the pointer, and an embedded page keeps it. The
+// steps are a terminal's; the page eases toward where they add up to, so
+// what is streamed back moves evenly.
 function nudge(dy) {
   const most = scroller.scrollHeight - scroller.clientHeight
   target = Math.max(0, Math.min(most, target + dy))

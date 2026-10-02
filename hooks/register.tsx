@@ -2,25 +2,12 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { MediaFilter, MediaItem, MediaSource } from '../types'
-import type { HitProps } from './hit'
-import type { WebHitPost, WebHitProps } from './web-hit'
-import {
-  absolute,
-  chunks,
-  fit,
-  hashOf,
-  hrefOf,
-  kindOf,
-  linked,
-  mediaPaths,
-  namesMedia,
-  pathOf,
-} from './paths'
+import type { HitPost, HitProps } from './hit'
+import { absolute, hashOf, hrefOf, kindOf, linked, mediaPaths, namesMedia, pathOf } from './paths'
 
-const PANE = 'medya'
-const TITLE = 'Medya'
+const PANE = 'vitrin'
+const TITLE = 'Vitrin'
 const KEEP = 60
-const PAGE = 12
 const MAX_EDGE = 1600
 const THUMB_EDGE = 480
 // A cell's width over its height; Ghostty's default font is close to this.
@@ -31,38 +18,26 @@ const FRESH_MS = 2000
 const PER_CALL = 8
 // The longest reply the mod redraws to make its paths pressable.
 const REPLY_MAX = 9000
-// The web view, a prototype: its pane, the points a column is wide when the
-// page is laid out, the pixels a wheel step moves it, and where node may be.
-const WEB = 'medya-web'
-const WEB_TITLE = 'Medya (web)'
+// The points a column is wide when the page is laid out, the pixels a wheel
+// step moves it, and where node may be.
 const CELL_POINTS = 9
 const WHEEL_PIXELS = 48
 const NODES = ['node', '/opt/homebrew/opt/node@22/bin/node', '/opt/homebrew/bin/node', '/usr/local/bin/node']
 
-const items = atom({ plugin: 'medya-paneli', key: 'items' } as const, [])
-const shown = atom({ plugin: 'medya-paneli', key: 'shown' } as const, PAGE)
-const ratio = atom({ plugin: 'medya-paneli', key: 'ratio' } as const, RATIO)
-const selected = atom({ plugin: 'medya-paneli', key: 'selected' } as const, null)
-const filter = atom({ plugin: 'medya-paneli', key: 'filter' } as const, 'chat')
-const webReady = atom({ plugin: 'medya-paneli', key: 'webReady' } as const, false)
+const items = atom({ plugin: 'vitrin', key: 'items' } as const, [])
+const ratio = atom({ plugin: 'vitrin', key: 'ratio' } as const, RATIO)
+const filter = atom({ plugin: 'vitrin', key: 'filter' } as const, 'chat')
+const isReady = atom({ plugin: 'vitrin', key: 'isReady' } as const, false)
 
-const LABEL = { image: 'resim', video: 'video', audio: 'ses', pdf: 'PDF', page: 'web sayfası' } as const
-const SOURCE = { chat: 'sohbet', tool: 'araç' } as const
+// What a button of the page asks the mod to do.
+type Act = { act?: string; id?: string; mode?: string }
 
 const busy = new Set<string>()
 const place = { home: '', cwd: '' }
-const web = { port: 0, isStarting: false, file: '', seq: 0, columns: 0, rows: 0, key: 'view' }
-
-function clock(ms: number): string {
-  const at = new Date(ms)
-  const two = (n: number) => String(n).padStart(2, '0')
-
-  return `${two(at.getHours())}:${two(at.getMinutes())}`
-}
-
-function short(name: string, width: number): string {
-  return name.length <= width ? name : `${name.slice(0, Math.max(1, width - 1))}…`
-}
+// The bridge as this module knows it: its port once it listens, the newest
+// frame, the pane's size in cells, the key the picture is drawn under, and
+// a file the page has yet to be told to show.
+const web = { port: 0, isStarting: false, file: '', seq: 0, columns: 0, rows: 0, key: 'view', pick: '' }
 
 // Every string a tool call's input holds, a few levels down.
 function strings(value: unknown, depth = 3): string[] {
@@ -111,9 +86,9 @@ async function thumbnail($: EngineInterface, source: string, preview: string, di
   }
 }
 
-// A PNG the terminal can draw, at most MAX_EDGE pixels a side: the picture
-// itself, a PDF's first page, a frame from a video's first second, a sound's
-// waveform, or Quick Look's thumbnail of a web page.
+// A PNG of the file, at most MAX_EDGE pixels a side: the picture itself, a
+// PDF's first page, a frame from a video's first second, a sound's waveform,
+// or Quick Look's thumbnail of a web page.
 async function previewOf($: EngineInterface, item: MediaItem, dir: string) {
   if (await $.fs.exists(item.preview)) {
     return
@@ -158,7 +133,7 @@ async function previewOf($: EngineInterface, item: MediaItem, dir: string) {
 }
 
 // The item with its preview's size and a small copy of it for the grid; with
-// no preview, the item as it is, its picture drawn as words.
+// no preview, the item as it is, its card drawn empty.
 async function sized($: EngineInterface, item: MediaItem, dir: string): Promise<MediaItem> {
   await previewOf($, item, dir)
   const size = await sizeOf($, item.preview)
@@ -178,17 +153,174 @@ async function sized($: EngineInterface, item: MediaItem, dir: string): Promise<
   return { ...item, ...size, thumb: hasThumb ? item.thumb : item.preview }
 }
 
+// One request to the bridge; nothing is said when it is not up.
+async function tell($: EngineInterface, route: string, data: unknown) {
+  if (web.port === 0) {
+    return
+  }
+
+  try {
+    await $.http.fetch(`http://127.0.0.1:${web.port}/${route}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+  } catch {
+    // The bridge went away; the stream's end resets the rest.
+  }
+}
+
+// The list as the page shows it, and with `pick` the file it shows large. A
+// pick made while the bridge is down is kept for when it is up.
+async function sync($: EngineInterface, pick = '') {
+  if (pick !== '') {
+    web.pick = pick
+  }
+
+  if (web.port === 0) {
+    return
+  }
+
+  const sent = { items: await read($, items), filter: await read($, filter), pick: web.pick }
+  web.pick = ''
+  await tell($, 'items', sent)
+}
+
+// The page's size for the pane's cells: laid out in points, a cell
+// CELL_POINTS wide and as tall as the cell ratio makes it.
+async function measure($: EngineInterface) {
+  if (web.columns > 0) {
+    const cell = await read($, ratio)
+    await tell($, 'size', { width: web.columns * CELL_POINTS, height: (web.rows * CELL_POINTS) / cell })
+  }
+}
+
+// The Finder's space-bar preview over the terminal, left running: the mod's
+// own helper, or the default app where the helper is not built.
+function quickLook($: EngineInterface, path: string) {
+  const script = 'if [ -x "$1" ]; then nohup "$1" "$2" >/dev/null 2>&1 & else /usr/bin/open "$2"; fi'
+  void ran($, ['/bin/sh', '-c', script, 'sh', `${$.plugin.root}/bin/onizle`, path])
+}
+
+async function choose($: EngineInterface, mode: MediaFilter) {
+  await update($, filter, () => mode)
+  await $.store.set('filter', mode)
+  await sync($)
+}
+
+async function clear($: EngineInterface) {
+  await update($, items, () => [])
+  await sync($)
+}
+
+// A button pressed in the page: what the browser cannot do itself.
+async function act($: EngineInterface, sent: Act) {
+  if (sent.act === 'clear') {
+    await clear($)
+
+    return
+  }
+
+  if (sent.act === 'filter') {
+    await choose($, sent.mode === 'all' ? 'all' : 'chat')
+
+    return
+  }
+
+  const item = (await read($, items)).find(one => one.id === sent.id)
+
+  if (item === undefined) {
+    return
+  }
+
+  if (sent.act === 'look') {
+    quickLook($, item.path)
+  } else if (sent.act === 'open') {
+    await ran($, ['/usr/bin/open', item.path])
+  } else if (sent.act === 'copy') {
+    await $.ui.copy({ text: item.path })
+  }
+}
+
+// Runs the bridge for as long as the module lives and the pane is open: each
+// frame the browser paints replaces the picture in the pane, with no redraw.
+async function stream($: EngineInterface) {
+  if (web.isStarting || web.port !== 0) {
+    return
+  }
+
+  web.isStarting = true
+  const { home } = await located($)
+  const dir = `${home}/.claude/cache/vitrin/kare-${hashOf(await $.session.id())}`
+
+  for (const node of NODES) {
+    try {
+      let rest = ''
+
+      for await (const piece of $.process.spawn({ argv: [node, `${$.plugin.root}/bin/bridge.mjs`, dir] })) {
+        if (piece.stream !== 'stdout') {
+          continue
+        }
+
+        const lines = `${rest}${piece.text}`.split('\n')
+        rest = lines.pop() ?? ''
+        // Only the newest of the frames that came together is worth drawing.
+        const frame = lines.findLast(line => line.startsWith('F '))
+
+        for (const line of lines) {
+          if (line.startsWith('READY ')) {
+            web.port = Number(line.slice(6))
+            await measure($)
+            await sync($)
+          } else if (line.startsWith('ACT ')) {
+            await act($, JSON.parse(line.slice(4)) as Act)
+          }
+        }
+
+        if (frame !== undefined) {
+          const [, file = '', seq = '0'] = frame.split(' ')
+          web.file = file
+          web.seq = Number(seq)
+
+          if (await read($, isReady)) {
+            await $.ui.blit({ requestId: PANE, key: web.key, source: { file, format: 'png', generation: web.seq } })
+          } else {
+            await update($, isReady, () => true)
+          }
+        }
+      }
+
+      break
+    } catch {
+      // This node is not there; the next may be.
+    }
+  }
+
+  web.port = 0
+  web.isStarting = false
+
+  try {
+    await update($, isReady, () => false)
+  } catch {
+    // The module is being unloaded: there is no pane left to tell.
+  }
+}
+
+// Opens the pane and starts the page behind it; where the terminal is too
+// narrow for a pane nobody asked for, a toast says how to open it.
 async function show($: EngineInterface) {
   const opened = await $.ui.open({ id: PANE, title: TITLE, columns: 64 })
 
-  if (!opened.isPlaced) {
-    $.ui.toast('Yeni medya hazır: görmek için /medya yaz')
+  if (opened.isPlaced) {
+    void stream($)
+  } else {
+    $.ui.toast('Yeni medya hazır: görmek için /vitrin yaz')
   }
 }
 
 // Adds the files that exist and are media to the top of the list, newest
 // first, and answers how many it added. A file a reply names is the chat's
-// (the pane opens for it), one a tool made is kept for the "all" view; a file
+// (the pane opens on it), one a tool made is kept for the "all" view; a file
 // last written before `since` is not this call's and is left out.
 async function ingest(
   $: EngineInterface,
@@ -202,8 +334,9 @@ async function ingest(
   }
 
   const { home, cwd } = await located($)
-  const dir = `${home}/.claude/cache/medya-paneli`
+  const dir = `${home}/.claude/cache/vitrin`
   let added = 0
+  let newest = ''
 
   for (const spelled of paths) {
     const path = absolute(spelled, cwd, home)
@@ -230,6 +363,7 @@ async function ingest(
           const mine: MediaItem = { ...known, from: 'chat' }
           await update($, items, list => [mine, ...list.filter(one => one.id !== id)])
           added += 1
+          newest = id
         }
 
         continue
@@ -259,6 +393,7 @@ async function ingest(
         return [next, ...list.filter(one => one.path !== path)].slice(0, KEEP)
       })
       added += 1
+      newest = id
     } catch {
       // A path the text named that is not there is not media.
     } finally {
@@ -266,13 +401,11 @@ async function ingest(
     }
   }
 
-  if (added > 0) {
-    void sync($)
-  }
-
   if (added > 0 && from === 'chat') {
-    await update($, selected, () => null)
+    await sync($, newest)
     await show($)
+  } else if (added > 0) {
+    await sync($)
   }
 
   return added
@@ -307,24 +440,6 @@ async function rescan($: EngineInterface) {
   }
 }
 
-// The Finder's space-bar preview over the terminal, left running: the mod's
-// own helper, or the default app where the helper is not built.
-function quickLook($: EngineInterface, path: string) {
-  const script = 'if [ -x "$1" ]; then nohup "$1" "$2" >/dev/null 2>&1 & else /usr/bin/open "$2"; fi'
-  void ran($, ['/bin/sh', '-c', script, 'sh', `${$.plugin.root}/bin/onizle`, path])
-}
-
-// Shows one item large at the top of the pane.
-async function pick($: EngineInterface, id: string) {
-  await update($, selected, () => id)
-
-  try {
-    await $.ui.scroll({ in: PANE, to: 'start' })
-  } catch {
-    // The pane is not on screen.
-  }
-}
-
 // A press on a media path in a reply: the pane opens on that file.
 async function jump($: EngineInterface, href: string) {
   const path = pathOf(href)
@@ -339,118 +454,15 @@ async function jump($: EngineInterface, href: string) {
     await update($, items, list => list.map(one => (one.id === item.id ? mine : one)))
   }
 
-  await $.ui.open({ id: PANE, title: TITLE, columns: 64 })
-  await pick($, item.id)
-}
-
-async function choose($: EngineInterface, mode: MediaFilter) {
-  await update($, filter, () => mode)
-  await update($, selected, () => null)
-  await $.store.set('filter', mode)
-  void sync($)
-}
-
-// One request to the web view's bridge; nothing is said when it is not up.
-async function tell($: EngineInterface, route: string, data: unknown) {
-  if (web.port === 0) {
-    return
-  }
-
-  try {
-    await $.http.fetch(`http://127.0.0.1:${web.port}/${route}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(data),
-    })
-  } catch {
-    // The bridge went away; the stream's end resets the rest.
-  }
-}
-
-// The list as the web view's page shows it.
-async function sync($: EngineInterface) {
-  await tell($, 'items', { items: await read($, items), filter: await read($, filter) })
-}
-
-// The page's size for the pane's cells: laid out in points, a cell
-// CELL_POINTS wide and as tall as the cell ratio makes it.
-async function measure($: EngineInterface) {
-  if (web.columns > 0) {
-    const cell = await read($, ratio)
-    await tell($, 'size', { width: web.columns * CELL_POINTS, height: (web.rows * CELL_POINTS) / cell })
-  }
-}
-
-// Runs the web view's bridge for as long as the module lives: each frame the
-// browser paints replaces the picture in the pane, with no redraw.
-async function stream($: EngineInterface) {
-  if (web.isStarting || web.port !== 0) {
-    return
-  }
-
-  web.isStarting = true
-  const { home } = await located($)
-  const dir = `${home}/.claude/cache/medya-paneli/web-${hashOf(await $.session.id())}`
-
-  for (const node of NODES) {
-    try {
-      let rest = ''
-
-      for await (const piece of $.process.spawn({ argv: [node, `${$.plugin.root}/bin/web.mjs`, dir] })) {
-        if (piece.stream !== 'stdout') {
-          continue
-        }
-
-        const lines = `${rest}${piece.text}`.split('\n')
-        rest = lines.pop() ?? ''
-        const ready = lines.find(line => line.startsWith('READY '))
-        // Only the newest of the frames that came together is worth drawing.
-        const frame = lines.findLast(line => line.startsWith('F '))
-
-        if (ready !== undefined) {
-          web.port = Number(ready.slice(6))
-          await measure($)
-          await sync($)
-        }
-
-        if (frame !== undefined) {
-          const [, file = '', seq = '0'] = frame.split(' ')
-          web.file = file
-          web.seq = Number(seq)
-
-          if (await read($, webReady)) {
-            await $.ui.blit({ requestId: WEB, key: web.key, source: { file, format: 'png', generation: web.seq } })
-          } else {
-            await update($, webReady, () => true)
-          }
-        }
-      }
-
-      break
-    } catch {
-      // This node is not there; the next may be.
-    }
-  }
-
-  web.port = 0
-  web.isStarting = false
-  await update($, webReady, () => false)
-}
-
-async function clear($: EngineInterface) {
-  await update($, items, () => [])
-  void sync($)
+  await sync($, item.id)
+  await show($)
 }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
-      name: 'medya',
-      description: 'Medya panelini aç; /medya <dosya> ekler, /medya hepsi, /medya sohbet, /medya temizle',
-    })
-    await $.command.register({
-      name: 'medya-web',
-      description: 'Medya panelinin web görünümü (deneme): akıcı kaydırma, panelde oynayan video',
+      name: 'vitrin',
+      description: 'Medya panelini aç; /vitrin <dosya> ekler, /vitrin hepsi, /vitrin sohbet, /vitrin temizle, /vitrin kapat',
     })
     const kept = Number(await $.store.get('ratio'))
 
@@ -462,16 +474,12 @@ export const register: Register = on => {
       await update($, filter, () => 'all')
     }
 
-    // What an earlier version of the mod kept has no source or small copy.
-    await update($, items, list =>
-      list.map(one => ({ ...one, from: one.from ?? 'chat', thumb: one.thumb ?? one.preview })),
-    )
     await located($)
-    await update($, webReady, () => false)
+    await update($, isReady, () => false)
     void rescan($)
 
     // A reload ends the bridge with the old module; an open pane wants it back.
-    if ((await $.ui.panes()).some(pane => pane.id === WEB)) {
+    if ((await $.ui.panes()).some(pane => pane.id === PANE)) {
       void stream($)
     }
 
@@ -502,13 +510,13 @@ export const register: Register = on => {
     return done
   })
 
-  on('command.run', { command: 'medya' }, async ($, e) => {
+  on('command.run', { command: 'vitrin' }, async ($, e) => {
     const args = e.args.trim()
 
     if (args === 'kapat') {
       await $.ui.close({ id: PANE })
 
-      return { text: 'Medya paneli kapatıldı.' }
+      return { text: 'Vitrin kapatıldı.' }
     }
 
     if (args === 'temizle') {
@@ -528,14 +536,16 @@ export const register: Register = on => {
 
       await update($, ratio, () => value)
       await $.store.set('ratio', value)
+      await measure($)
 
-      return { text: `Resim en-boy düzeltmesi ${value} yapıldı.` }
+      return { text: `Sayfanın en-boy düzeltmesi ${value} yapıldı.` }
     }
 
     await $.ui.open({ id: PANE, title: TITLE, columns: 64 })
+    void stream($)
 
     if (args === '') {
-      return { text: 'Medya paneli açıldı.' }
+      return { text: 'Vitrin açıldı.' }
     }
 
     if (args === 'hepsi') {
@@ -552,41 +562,12 @@ export const register: Register = on => {
 
     const added = await ingest($, [args.replace(/^["']|["']$/g, '')], 'chat')
 
-    return { text: added > 0 ? 'Medya panele eklendi.' : `Gösterilemedi: ${args}` }
+    return { text: added > 0 ? 'Medya vitrine eklendi.' : `Gösterilemedi: ${args}` }
   })
 
-  // A click on a picture in the pane: a small one is shown large, the large
-  // one opens in the preview window.
+  // The pane's region said its size, or heard a click: both go to the page.
   on('ui.message', { requestId: PANE }, async ($, e, next) => {
-    const { act, id } = (e.data ?? {}) as Partial<HitProps>
-    const item = (await read($, items)).find(one => one.id === id)
-
-    if (item !== undefined && act === 'pick') {
-      await pick($, item.id)
-    } else if (item !== undefined && act === 'look') {
-      quickLook($, item.path)
-    }
-
-    return next(e)
-  })
-
-  on('command.run', { command: 'medya-web' }, async ($, e) => {
-    if (e.args.trim() === 'kapat') {
-      await $.ui.close({ id: WEB })
-
-      return { text: 'Web görünümü kapatıldı.' }
-    }
-
-    await $.ui.open({ id: WEB, title: WEB_TITLE, columns: 64 })
-    void stream($)
-
-    return { text: 'Web görünümü açılıyor (deneme).' }
-  })
-
-  // The web view's region said its size, or heard a click: both go to the
-  // page the bridge runs.
-  on('ui.message', { requestId: WEB }, async ($, e, next) => {
-    const sent = e.data as WebHitPost | undefined
+    const sent = e.data as HitPost | undefined
 
     if (sent?.kind === 'size') {
       web.columns = sent.columns
@@ -599,52 +580,55 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The wheel over the web view moves the page, not the pane: the pane's own
+  // The wheel over the pane moves the page, not the pane: the pane's own
   // window has nowhere to go.
-  on('ui.scroll', { requestId: WEB }, ($, e) => {
-    void tell($, 'input', { kind: 'wheel', x: 0.5, y: 0.5, dy: e.by * WHEEL_PIXELS })
+  on('ui.scroll', { requestId: PANE }, ($, e) => {
+    void tell($, 'input', { kind: 'wheel', dy: e.by * WHEEL_PIXELS })
 
     return {}
   })
 
-  on('ui.close', { id: WEB }, async ($, e, next) => {
+  // A closed pane needs no browser behind it.
+  on('ui.close', { id: PANE }, async ($, e, next) => {
     const closed = await next(e)
     void tell($, 'quit', {})
 
     return closed
   })
 
-  on('ui.render', { component: 'Pane', requestId: WEB }, async ($, e) => {
+  // The pane is one picture, the page as the browser last painted it, under
+  // an empty region that hears the pointer.
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
-    const isReady = await read($, webReady)
+    const hasFrame = await read($, isReady)
     const columns = Math.max(10, e.props.bodyColumns)
     const rows = Math.max(5, e.props.scroll.bodyRows || (e.viewport?.rows ?? 40) - 8)
 
     if (e.surface !== 'terminal') {
-      return <Text dimColor>Web görünümü yalnızca terminalde çizilir.</Text>
+      return <Text dimColor>Vitrin yalnızca terminalde çizilir.</Text>
     }
 
     const { Client, Image } = $.ui.resolve(e)
-    const region: WebHitProps = { columns, rows }
+    const region: HitProps = { columns, rows }
     // A new size is a new picture to the terminal: under the old key it
     // keeps the old box and crops or shrinks every frame that follows.
     web.key = `view-${columns}x${rows}`
 
     return (
       <Box width={columns} height={rows}>
-        {isReady && web.file !== '' ? (
+        {hasFrame && web.file !== '' ? (
           <Image
             key={web.key}
             source={{ file: web.file, format: 'png', generation: web.seq }}
             columns={Math.min(255, columns)}
             rows={Math.min(255, rows)}
-            alt="Medya"
+            alt="Vitrin"
           />
         ) : (
-          <Text dimColor>Web görünümü başlatılıyor…</Text>
+          <Text dimColor>Vitrin başlatılıyor…</Text>
         )}
         <Box position="absolute" top={0} left={0}>
-          <Client key="web" module="./web-hit.tsx" props={region} width={columns} height={rows} />
+          <Client key="hit" module="./hit.tsx" props={region} width={columns} height={rows} />
         </Box>
       </Box>
     )
@@ -685,142 +669,6 @@ export const register: Register = on => {
             onLinkPress={link => void jump($, link.href)}
           />
         </Box>
-      </Box>
-    )
-  })
-
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Button, Text } = $.ui.resolve(e)
-    const all = await read($, items)
-    const mode = await read($, filter)
-    const count = await read($, shown)
-    const cell = await read($, ratio)
-    const picked = await read($, selected)
-    const chat = all.filter(one => one.from === 'chat')
-    const list = mode === 'chat' ? chat : all
-    const main = list.find(one => one.id === picked) ?? list[0]
-    const columns = Math.max(10, e.props.bodyColumns)
-    const maxRows = Math.max(6, Math.floor((e.viewport?.rows ?? 40) * 0.45))
-    const across = columns >= 54 ? 3 : 2
-    const wide = Math.max(4, Math.floor((columns - (across - 1)) / across))
-    const tall = Math.max(3, Math.round(wide * 0.62 * cell))
-
-    // A picture in a box of `room` by `rows` cells, the whole box hearing a
-    // click: the picture sits in the middle and an empty click region lies
-    // over the box, since the pointer goes to what is drawn last. A new box is a new picture to the terminal (another key,
-    // another source), so it scales the file again instead of cropping the
-    // one it placed for the old box.
-    const framed = (item: MediaItem, file: string, room: number, rows: number, act: HitProps['act']) => {
-      if (e.surface !== 'terminal') {
-        return <Text dimColor>{item.name}</Text>
-      }
-
-      const { Client, Image } = $.ui.resolve(e)
-      const size = file === '' ? { columns: room, rows } : fit(item.width, item.height, room, rows, cell)
-      const hit: HitProps = { act, id: item.id, columns: room, rows: act === 'look' ? size.rows : rows }
-
-      return (
-        <Box width={room} height={hit.rows} justifyContent={act === 'look' ? 'flex-start' : 'center'} alignItems="center">
-          {file === '' ? (
-            <Text dimColor>(önizleme yok)</Text>
-          ) : (
-            <Image
-              key={`${act}-${item.id}-${size.columns}x${size.rows}`}
-              source={{ file, format: 'png', generation: size.columns * 1000 + size.rows }}
-              columns={size.columns}
-              rows={size.rows}
-              alt={item.name}
-            />
-          )}
-          <Box position="absolute" top={0} left={0}>
-            <Client key={`${act}-${item.id}`} module="./hit.tsx" props={hit} width={room} height={hit.rows} />
-          </Box>
-        </Box>
-      )
-    }
-
-    return (
-      <Box flexDirection="column">
-        <Box flexDirection="row" gap={1}>
-          <Text bold>Medya</Text>
-          <Text dimColor>
-            {list.length} dosya{mode === 'chat' ? ', sohbette gönderilenler' : ', araçların ürettikleri dahil'}
-          </Text>
-        </Box>
-        <Box flexDirection="row" gap={1}>
-          <Button
-            key="chat"
-            label={`Sohbet ${chat.length}`}
-            variant={mode === 'chat' ? 'primary' : 'secondary'}
-            onPress={() => void choose($, 'chat')}
-          />
-          <Button
-            key="all"
-            label={`Hepsi ${all.length}`}
-            variant={mode === 'all' ? 'primary' : 'secondary'}
-            onPress={() => void choose($, 'all')}
-          />
-          <Button key="clear" label="Temizle" onPress={() => void clear($)} />
-          <Button key="close" label="Kapat" role="dismiss" onPress={() => void $.ui.close({ id: PANE })} />
-        </Box>
-        {main === undefined && (
-          <Box marginTop={1}>
-            <Text dimColor>
-              {all.length > 0
-                ? `Sohbette gönderilen medya yok. Araçların ürettiği ${all.length} dosya için Hepsi'ne bas.`
-                : 'Henüz medya yok. Claude bir resim, video, PDF ya da ses gönderdiğinde burada görünür.'}
-            </Text>
-          </Box>
-        )}
-        {main !== undefined && (
-          <Box flexDirection="column" marginTop={1} marginBottom={1}>
-            {framed(main, main.preview, columns, maxRows, 'look')}
-            <Text wrap="truncate-middle">{main.name}</Text>
-            <Text dimColor>
-              {LABEL[main.kind]} · {clock(main.addedAt)} · {SOURCE[main.from]}
-            </Text>
-            <Box flexDirection="row" gap={1}>
-              <Button
-                key="look"
-                label={main.kind === 'video' || main.kind === 'audio' ? 'Oynat' : 'Büyüt'}
-                variant="primary"
-                onPress={() => quickLook($, main.path)}
-              />
-              <Button key="open" label="Aç" onPress={() => void ran($, ['/usr/bin/open', main.path])} />
-              <Button
-                key="copy"
-                label="Yolu kopyala"
-                onPress={press => void $.ui.copy({ text: main.path, surface: press.surface })}
-              />
-            </Box>
-          </Box>
-        )}
-        {main !== undefined &&
-          list.length > 1 &&
-          chunks(list.slice(0, count), across).map(row => (
-            <Box flexDirection="row" gap={1} marginBottom={1}>
-              {row.map(item => (
-                <Box key={`cell-${item.id}`} flexDirection="column" width={wide}>
-                  {framed(item, item.thumb, wide, tall, 'pick')}
-                  <Button
-                    key={`name-${item.id}`}
-                    plain
-                    dimColor={item.id !== main.id}
-                    hover={{ dimColor: false }}
-                    label={short(`${item.id === main.id ? '▸ ' : ''}${item.name}`, wide)}
-                    onPress={() => void pick($, item.id)}
-                  />
-                </Box>
-              ))}
-            </Box>
-          ))}
-        {list.length > count && (
-          <Button
-            key="more"
-            label={`Daha eski ${list.length - count} medyayı göster`}
-            onPress={() => void update($, shown, n => n + PAGE)}
-          />
-        )}
       </Box>
     )
   })

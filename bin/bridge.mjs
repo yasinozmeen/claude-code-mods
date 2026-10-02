@@ -1,11 +1,12 @@
-// The web view behind the "medya-web" pane: a headless browser draws the
-// gallery page, each frame it paints is written as a PNG the terminal reads,
-// and the clicks and wheel the pane hears are played back into the page.
+// The browser behind the Vitrin pane: a headless browser draws the gallery
+// page, each frame it paints is written as a PNG the terminal reads, and the
+// clicks and wheel the pane hears are played back into the page.
 //
-//   node web.mjs <frame directory>
+//   node bridge.mjs <frame directory>
 //
 // stdout, one line each: `READY <port>` once the bridge listens, `F <file>
-// <seq>` per frame, `LOG <text>` for the rest. It ends with its parent.
+// <seq>` per frame, `ACT <json>` for a button of the page the mod must act
+// on, `LOG <text>` for the rest. It ends with its parent.
 
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
@@ -15,7 +16,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-const frames = process.argv[2] ?? path.join(os.tmpdir(), 'medya-web')
+const frames = process.argv[2] ?? path.join(os.tmpdir(), 'vitrin')
 const ROTATE = 16
 const BROWSERS = [
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -32,7 +33,7 @@ const TYPES = {
 }
 
 const say = line => process.stdout.write(`${line}\n`)
-const state = { items: [], filter: 'chat', version: 0, width: 576, height: 900, scale: 2 }
+const state = { items: [], filter: 'chat', pick: { id: '', n: 0 }, version: 0, width: 576, height: 900, scale: 2 }
 const listeners = new Set()
 let browser
 let socket
@@ -130,10 +131,10 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-    res.end(fs.readFileSync(path.join(here, 'web.html')))
+    res.end(fs.readFileSync(path.join(here, 'page.html')))
   } else if (req.method === 'GET' && url.pathname === '/items') {
     res.writeHead(200, { 'content-type': 'application/json' })
-    res.end(JSON.stringify({ items: state.items, filter: state.filter }))
+    res.end(JSON.stringify({ items: state.items, filter: state.filter, pick: state.pick }))
   } else if (req.method === 'GET' && url.pathname === '/events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
     res.write(`data: ${state.version}\n\n`)
@@ -145,6 +146,12 @@ const server = http.createServer(async (req, res) => {
     const sent = await body(req)
     state.items = Array.isArray(sent.items) ? sent.items : []
     state.filter = sent.filter === 'all' ? 'all' : 'chat'
+
+    // A file the mod wants shown: counted, so the page shows it once.
+    if (typeof sent.pick === 'string' && sent.pick !== '') {
+      state.pick = { id: sent.pick, n: state.pick.n + 1 }
+    }
+
     changed()
     res.writeHead(204).end()
   } else if (req.method === 'POST' && url.pathname === '/size') {
@@ -177,6 +184,9 @@ const server = http.createServer(async (req, res) => {
     }
 
     res.writeHead(204).end()
+  } else if (req.method === 'POST' && url.pathname === '/act') {
+    say(`ACT ${JSON.stringify(await body(req))}`)
+    res.writeHead(204).end()
   } else if (req.method === 'POST' && url.pathname === '/quit') {
     res.writeHead(204).end()
     stop()
@@ -203,7 +213,7 @@ async function start(port) {
     stop()
   }
 
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'medya-web-'))
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'vitrin-'))
   browser = spawn(binary, [
     '--headless=new',
     '--remote-debugging-port=0',

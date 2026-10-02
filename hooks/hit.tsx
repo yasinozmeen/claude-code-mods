@@ -1,17 +1,31 @@
 import type { ClientModule } from 'claude-code'
 
-export type HitProps = { act: 'pick' | 'look'; id: string; columns: number; rows: number }
+export type HitProps = { columns: number; rows: number }
 
-// An empty region that hears a click, laid over a picture: a left click
-// released inside it is posted to the hooks module.
-const Hit: ClientModule<HitProps> = (props, surface) => {
+export type HitPost =
+  | { kind: 'size'; columns: number; rows: number }
+  | { kind: 'click'; x: number; y: number }
+
+// The empty region over the pane's picture: it says how large it is, and
+// posts each click as a point from 0 to 1 across and down.
+const Hit: ClientModule<HitProps, HitProps> = (props, surface) => {
   const { Box } = surface.elements
+  const known = surface.state
+
+  if (known === undefined || known.columns !== props.columns || known.rows !== props.rows) {
+    surface.setState({ columns: props.columns, rows: props.rows })
+    surface.post({ kind: 'size', columns: props.columns, rows: props.rows })
+  }
 
   surface.onPointer(event => {
     const isInside = event.x >= 0 && event.y >= 0 && event.x < props.columns && event.y < props.rows
 
-    if (event.type === 'up' && event.button === 'left' && isInside) {
-      surface.post({ act: props.act, id: props.id })
+    if (event.type === 'up' && isInside) {
+      surface.post({
+        kind: 'click',
+        x: (event.fine?.x ?? event.x + 0.5) / props.columns,
+        y: (event.fine?.y ?? event.y + 0.5) / props.rows,
+      })
     }
   })
 

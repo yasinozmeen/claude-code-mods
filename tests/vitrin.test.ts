@@ -1,13 +1,13 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { absolute, fit, hrefOf, kindOf, linked, mediaPaths, pathOf } from '../hooks/paths'
+import { absolute, hrefOf, kindOf, linked, mediaPaths, pathOf } from '../hooks/paths'
 
 const PANE = {
-  plugin: 'medya-paneli',
+  plugin: 'vitrin',
   component: 'Pane',
-  requestId: 'medya',
+  requestId: 'vitrin',
   props: {
-    title: 'Medya',
+    title: 'Vitrin',
     isFocused: false,
     bodyColumns: 60,
     placement: 'dock',
@@ -37,11 +37,6 @@ test('a reply\'s media paths are found, web links and other files are not', () =
   expect(absolute('out/a.png', '/work', '/Users/x')).toBe('/work/out/a.png')
 })
 
-test('a picture keeps its shape inside the pane', () => {
-  expect(fit(800, 400, 60, 30, 0.5)).toEqual({ columns: 60, rows: 15 })
-  expect(fit(400, 1600, 60, 30, 0.5)).toEqual({ columns: 15, rows: 30 })
-})
-
 test('a known path in a reply becomes a link, code is left alone', () => {
   const known = (path: string) => (path === '/tmp/a b.png' || path === 'out/c.png' ? hrefOf(`/x/${path}`) : undefined)
   const made = linked(
@@ -56,78 +51,106 @@ test('a known path in a reply becomes a link, code is left alone', () => {
   expect(pathOf('file:///tmp/a%20b.png')).toBe('/tmp/a b.png')
 })
 
-test('the pane shows the newest large and a grid; a press picks, a filter narrows', async ($, on) => {
+test('media reaches the page behind the pane; its buttons and a pressed path act', async ($, on) => {
   mock.clock(on, { now: 1000 })
   mock.store(on)
   const opened: string[] = []
+  const posts: { route: string; body: Record<string, unknown> }[] = []
+  const commands: string[][] = []
   on('env.get', () => ({ value: '/Users/x' }))
   on('session.cwd', () => ({ value: '/work' }))
+  on('session.id', () => ({ value: 'oturum' }))
   on('session.messages', () => ({ value: [] }))
+  on('ui.panes', () => ({ value: [] }))
   on('fs.stat', () => ({ value: { kind: 'file' as const, size: 10, mtimeMs: 5000, isLink: false } }))
   on('fs.exists', () => ({ value: true }))
-  on('process.run', () => ({
-    value: {
-      exitCode: 0,
-      stdout: '  pixelWidth: 800\n  pixelHeight: 400\n',
-      stderr: '',
-      isStdoutTruncated: false,
-      isStderrTruncated: false,
-    },
-  }))
+  on('process.run', (_, e) => {
+    commands.push([...e.argv])
+
+    return {
+      value: {
+        exitCode: 0,
+        stdout: '  pixelWidth: 800\n  pixelHeight: 400\n',
+        stderr: '',
+        isStdoutTruncated: false,
+        isStderrTruncated: false,
+      },
+    }
+  })
+  // The bridge: it listens, a button of the page is pressed, a frame comes,
+  // and it stays up until the test lets it go.
+  let stop = () => {}
+  const stopped = new Promise<void>(resolve => (stop = resolve))
+  on('process.spawn', async function* () {
+    yield { stream: 'stdout' as const, text: 'READY 4321\nACT {"act":"filter","mode":"all"}\n' }
+    yield { stream: 'stdout' as const, text: 'F /tmp/kare/f1.png 1\n' }
+    await stopped
+
+    return { value: { code: 0, signal: null } }
+  })
+  on('http.fetch', (_, e) => {
+    posts.push({ route: new URL(e.url).pathname, body: JSON.parse(e.init?.body ?? '{}') })
+
+    return { value: { status: 204, ok: true, headers: {}, text: '' } }
+  })
   on('ui.open', (_, e) => {
     opened.push(e.id)
 
     return { value: { isPlaced: true as const } }
   })
-  on('ui.scroll', () => ({}))
+  on('ui.blit', () => ({ value: {} }))
+  on('ui.close', () => ({ value: undefined }))
   on('ui.render', { component: 'AssistantMessage' }, () => ({ type: 'Text', props: {}, children: ['engine'] }))
   on('tool.call', () => ({ result: {}, text: 'wrote /tmp/arac.png and /tmp/sayfa.html' }))
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await ui.find({ type: 'Image' })).toBeUndefined()
+  expect(await ui.find({ type: 'Client' })).toBeDefined()
 
   for (const args of ['/tmp/bir.png', '"/tmp/iki.png"', '/tmp/notlar.txt']) {
     await $.command.run({
-      command: 'medya',
+      command: 'vitrin',
       args,
       origin: { kind: 'composer' },
       presentation: { isFullscreen: true, columns: 200 },
     })
   }
 
-  // One large picture and a small one per file.
-  expect(await ui.findAll({ type: 'Image' })).toHaveLength(3)
-  expect(opened).toContain('medya')
-  expect(await ui.find({ type: 'Text', text: 'iki.png' })).toBeDefined()
-
-  // A file a tool wrote is kept for the "all" view only; a web page is not.
+  // A file a tool wrote is kept, marked as the tool's; a web page it wrote is not.
   await $.tool.call({ tool: 'Bash', command: 'make /tmp/arac.png' })
-  await ui.press({ key: 'chat' })
-  expect(await ui.findAll({ type: 'Image' })).toHaveLength(3)
-  await ui.press({ key: 'all' })
-  expect(await ui.findAll({ type: 'Image' })).toHaveLength(4)
-  expect(await ui.find({ type: 'Text', text: 'arac.png' })).toBeDefined()
 
   // A reply naming a file the pane holds is drawn with the path pressable,
-  // and the press shows that file large; another reply is the engine's own.
+  // and the press asks the page to show that file.
   const reply = await $.ui.mount({
-    plugin: 'medya-paneli',
+    plugin: 'vitrin',
     surface: 'terminal',
     component: 'AssistantMessage',
     props: { text: 'İlk resim: `/tmp/bir.png`', isFirstOfReply: true },
   })
-  const drawn = await reply.find({ type: 'Markdown' })
-  expect(drawn).toBeDefined()
+  expect(await reply.find({ type: 'Markdown' })).toBeDefined()
   await reply.press({ key: 'reply', link: { href: 'file:///tmp/bir.png' } })
-  expect(await ui.find({ type: 'Button', text: /▸ bir\.png/ })).toBeDefined()
 
-  // A click anywhere in a small picture's box shows that file large.
-  await ui.press({ key: 'all' })
-  const boxes = (await ui.findAll({ type: 'Client' })).filter(one => /^pick-/.test(one.key ?? ''))
-  expect(boxes).toHaveLength(3)
-  await ui.pointer({ type: 'up', x: 1, y: 1, button: 'left', in: boxes[0]?.key ?? '' })
-  expect(await ui.find({ type: 'Button', text: /▸ arac\.png/ })).toBeDefined()
+  // The page was told the whole list, the filter its own button chose, and
+  // which file to show.
+  expect(opened).toContain('vitrin')
+  const last = posts.filter(one => one.route === '/items').at(-1)?.body as {
+    items: { id: string; name: string; from: string }[]
+    filter: string
+    pick: string
+  }
+  expect(last.filter).toBe('all')
+  expect(last.items.map(one => `${one.name}:${one.from}`)).toEqual(['arac.png:tool', 'iki.png:chat', 'bir.png:chat'])
+  expect(last.pick).toBe(last.items.find(one => one.name === 'bir.png')?.id)
 
-  await ui.press({ key: 'clear' })
-  expect(await ui.findAll({ type: 'Image' })).toHaveLength(0)
+  // A click in the pane is played into the page.
+  await ui.pointer({ type: 'up', x: 30, y: 20, button: 'left', in: 'hit' })
+  expect(posts.some(one => one.route === '/input' && one.body.kind === 'click')).toBe(true)
+  expect(await ui.find({ type: 'Image' })).toBeDefined()
+
+  stop()
+  await $.command.run({
+    command: 'vitrin',
+    args: 'kapat',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: true, columns: 200 },
+  })
 })

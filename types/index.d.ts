@@ -20,13 +20,11 @@ export type MediaItem = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'medya-paneli': {
+    vitrin: {
       items: MediaItem[]
-      shown: number
       ratio: number
-      selected: string | null
       filter: MediaFilter
-      webReady: boolean
+      isReady: boolean
     }
   }
 }

@@ -106,30 +106,6 @@ export function hashOf(text: string): string {
   return (hash >>> 0).toString(16).padStart(8, '0')
 }
 
-// The cells a picture of `width` by `height` pixels takes in a body `columns`
-// wide and at most `maxRows` tall; `ratio` is a cell's width over its height.
-export function fit(
-  width: number,
-  height: number,
-  columns: number,
-  maxRows: number,
-  ratio: number,
-): { columns: number; rows: number } {
-  const wide = Math.max(1, Math.min(255, Math.floor(columns)))
-  const rows = Math.max(1, Math.round(((wide * height) / width) * ratio))
-
-  if (rows <= maxRows) {
-    return { columns: wide, rows }
-  }
-
-  const tall = Math.max(1, Math.min(255, Math.floor(maxRows)))
-
-  return {
-    columns: Math.max(1, Math.min(wide, Math.round((tall * width) / height / ratio))),
-    rows: tall,
-  }
-}
-
 export function namesMedia(text: string): boolean {
   return new RegExp(`\\.(?:${EXT})(?![\\p{L}\\p{N}_])`, 'iu').test(text)
 }
@@ -141,16 +117,6 @@ export function hrefOf(path: string): string {
 // The path a `file:` link leads to, however the surface spelled the link.
 export function pathOf(href: string): string {
   return decoded(href.replace(/^file:\/\//, ''))
-}
-
-export function chunks<T>(list: readonly T[], size: number): T[][] {
-  const rows: T[][] = []
-
-  for (let i = 0; i < list.length; i += size) {
-    rows.push(list.slice(i, i + size))
-  }
-
-  return rows
 }
 
 // A reply's markdown with each media path `hrefFor` knows turned into a link
