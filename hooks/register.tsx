@@ -3,6 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { MediaFilter, MediaItem, MediaSource } from '../types'
 import type { HitProps } from './hit'
+import type { WebHitPost, WebHitProps } from './web-hit'
 import {
   absolute,
   chunks,
@@ -30,18 +31,27 @@ const FRESH_MS = 2000
 const PER_CALL = 8
 // The longest reply the mod redraws to make its paths pressable.
 const REPLY_MAX = 9000
+// The web view, a prototype: its pane, the points a column is wide when the
+// page is laid out, the pixels a wheel step moves it, and where node may be.
+const WEB = 'medya-web'
+const WEB_TITLE = 'Medya (web)'
+const CELL_POINTS = 9
+const WHEEL_PIXELS = 48
+const NODES = ['node', '/opt/homebrew/opt/node@22/bin/node', '/opt/homebrew/bin/node', '/usr/local/bin/node']
 
 const items = atom({ plugin: 'medya-paneli', key: 'items' } as const, [])
 const shown = atom({ plugin: 'medya-paneli', key: 'shown' } as const, PAGE)
 const ratio = atom({ plugin: 'medya-paneli', key: 'ratio' } as const, RATIO)
 const selected = atom({ plugin: 'medya-paneli', key: 'selected' } as const, null)
 const filter = atom({ plugin: 'medya-paneli', key: 'filter' } as const, 'chat')
+const webReady = atom({ plugin: 'medya-paneli', key: 'webReady' } as const, false)
 
 const LABEL = { image: 'resim', video: 'video', audio: 'ses', pdf: 'PDF', page: 'web sayfası' } as const
 const SOURCE = { chat: 'sohbet', tool: 'araç' } as const
 
 const busy = new Set<string>()
 const place = { home: '', cwd: '' }
+const web = { port: 0, isStarting: false, file: '', seq: 0, columns: 0, rows: 0, key: 'view' }
 
 function clock(ms: number): string {
   const at = new Date(ms)
@@ -256,6 +266,10 @@ async function ingest(
     }
   }
 
+  if (added > 0) {
+    void sync($)
+  }
+
   if (added > 0 && from === 'chat') {
     await update($, selected, () => null)
     await show($)
@@ -333,6 +347,99 @@ async function choose($: EngineInterface, mode: MediaFilter) {
   await update($, filter, () => mode)
   await update($, selected, () => null)
   await $.store.set('filter', mode)
+  void sync($)
+}
+
+// One request to the web view's bridge; nothing is said when it is not up.
+async function tell($: EngineInterface, route: string, data: unknown) {
+  if (web.port === 0) {
+    return
+  }
+
+  try {
+    await $.http.fetch(`http://127.0.0.1:${web.port}/${route}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+  } catch {
+    // The bridge went away; the stream's end resets the rest.
+  }
+}
+
+// The list as the web view's page shows it.
+async function sync($: EngineInterface) {
+  await tell($, 'items', { items: await read($, items), filter: await read($, filter) })
+}
+
+// The page's size for the pane's cells: laid out in points, a cell
+// CELL_POINTS wide and as tall as the cell ratio makes it.
+async function measure($: EngineInterface) {
+  if (web.columns > 0) {
+    const cell = await read($, ratio)
+    await tell($, 'size', { width: web.columns * CELL_POINTS, height: (web.rows * CELL_POINTS) / cell })
+  }
+}
+
+// Runs the web view's bridge for as long as the module lives: each frame the
+// browser paints replaces the picture in the pane, with no redraw.
+async function stream($: EngineInterface) {
+  if (web.isStarting || web.port !== 0) {
+    return
+  }
+
+  web.isStarting = true
+  const { home } = await located($)
+  const dir = `${home}/.claude/cache/medya-paneli/web-${hashOf(await $.session.id())}`
+
+  for (const node of NODES) {
+    try {
+      let rest = ''
+
+      for await (const piece of $.process.spawn({ argv: [node, `${$.plugin.root}/bin/web.mjs`, dir] })) {
+        if (piece.stream !== 'stdout') {
+          continue
+        }
+
+        const lines = `${rest}${piece.text}`.split('\n')
+        rest = lines.pop() ?? ''
+        const ready = lines.find(line => line.startsWith('READY '))
+        // Only the newest of the frames that came together is worth drawing.
+        const frame = lines.findLast(line => line.startsWith('F '))
+
+        if (ready !== undefined) {
+          web.port = Number(ready.slice(6))
+          await measure($)
+          await sync($)
+        }
+
+        if (frame !== undefined) {
+          const [, file = '', seq = '0'] = frame.split(' ')
+          web.file = file
+          web.seq = Number(seq)
+
+          if (await read($, webReady)) {
+            await $.ui.blit({ requestId: WEB, key: web.key, source: { file, format: 'png', generation: web.seq } })
+          } else {
+            await update($, webReady, () => true)
+          }
+        }
+      }
+
+      break
+    } catch {
+      // This node is not there; the next may be.
+    }
+  }
+
+  web.port = 0
+  web.isStarting = false
+  await update($, webReady, () => false)
+}
+
+async function clear($: EngineInterface) {
+  await update($, items, () => [])
+  void sync($)
 }
 
 export const register: Register = on => {
@@ -340,6 +447,10 @@ export const register: Register = on => {
     await $.command.register({
       name: 'medya',
       description: 'Medya panelini aç; /medya <dosya> ekler, /medya hepsi, /medya sohbet, /medya temizle',
+    })
+    await $.command.register({
+      name: 'medya-web',
+      description: 'Medya panelinin web görünümü (deneme): akıcı kaydırma, panelde oynayan video',
     })
     const kept = Number(await $.store.get('ratio'))
 
@@ -356,7 +467,13 @@ export const register: Register = on => {
       list.map(one => ({ ...one, from: one.from ?? 'chat', thumb: one.thumb ?? one.preview })),
     )
     await located($)
+    await update($, webReady, () => false)
     void rescan($)
+
+    // A reload ends the bridge with the old module; an open pane wants it back.
+    if ((await $.ui.panes()).some(pane => pane.id === WEB)) {
+      void stream($)
+    }
 
     return next(e)
   })
@@ -395,7 +512,7 @@ export const register: Register = on => {
     }
 
     if (args === 'temizle') {
-      await update($, items, () => [])
+      await clear($)
 
       return { text: 'Medya listesi boşaltıldı.' }
     }
@@ -451,6 +568,86 @@ export const register: Register = on => {
     }
 
     return next(e)
+  })
+
+  on('command.run', { command: 'medya-web' }, async ($, e) => {
+    if (e.args.trim() === 'kapat') {
+      await $.ui.close({ id: WEB })
+
+      return { text: 'Web görünümü kapatıldı.' }
+    }
+
+    await $.ui.open({ id: WEB, title: WEB_TITLE, columns: 64 })
+    void stream($)
+
+    return { text: 'Web görünümü açılıyor (deneme).' }
+  })
+
+  // The web view's region said its size, or heard a click: both go to the
+  // page the bridge runs.
+  on('ui.message', { requestId: WEB }, async ($, e, next) => {
+    const sent = e.data as WebHitPost | undefined
+
+    if (sent?.kind === 'size') {
+      web.columns = sent.columns
+      web.rows = sent.rows
+      await measure($)
+    } else if (sent?.kind === 'click') {
+      await tell($, 'input', sent)
+    }
+
+    return next(e)
+  })
+
+  // The wheel over the web view moves the page, not the pane: the pane's own
+  // window has nowhere to go.
+  on('ui.scroll', { requestId: WEB }, ($, e) => {
+    void tell($, 'input', { kind: 'wheel', x: 0.5, y: 0.5, dy: e.by * WHEEL_PIXELS })
+
+    return {}
+  })
+
+  on('ui.close', { id: WEB }, async ($, e, next) => {
+    const closed = await next(e)
+    void tell($, 'quit', {})
+
+    return closed
+  })
+
+  on('ui.render', { component: 'Pane', requestId: WEB }, async ($, e) => {
+    const { Box, Text } = $.ui.resolve(e)
+    const isReady = await read($, webReady)
+    const columns = Math.max(10, e.props.bodyColumns)
+    const rows = Math.max(5, e.props.scroll.bodyRows || (e.viewport?.rows ?? 40) - 8)
+
+    if (e.surface !== 'terminal') {
+      return <Text dimColor>Web görünümü yalnızca terminalde çizilir.</Text>
+    }
+
+    const { Client, Image } = $.ui.resolve(e)
+    const region: WebHitProps = { columns, rows }
+    // A new size is a new picture to the terminal: under the old key it
+    // keeps the old box and crops or shrinks every frame that follows.
+    web.key = `view-${columns}x${rows}`
+
+    return (
+      <Box width={columns} height={rows}>
+        {isReady && web.file !== '' ? (
+          <Image
+            key={web.key}
+            source={{ file: web.file, format: 'png', generation: web.seq }}
+            columns={Math.min(255, columns)}
+            rows={Math.min(255, rows)}
+            alt="Medya"
+          />
+        ) : (
+          <Text dimColor>Web görünümü başlatılıyor…</Text>
+        )}
+        <Box position="absolute" top={0} left={0}>
+          <Client key="web" module="./web-hit.tsx" props={region} width={columns} height={rows} />
+        </Box>
+      </Box>
+    )
   })
 
   // A reply that names media the pane holds is drawn with those paths as
@@ -509,8 +706,8 @@ export const register: Register = on => {
     const tall = Math.max(3, Math.round(wide * 0.62 * cell))
 
     // A picture in a box of `room` by `rows` cells, the whole box hearing a
-    // click: a click region fills it and the picture is drawn over that, in
-    // the middle. A new box is a new picture to the terminal (another key,
+    // click: the picture sits in the middle and an empty click region lies
+    // over the box, since the pointer goes to what is drawn last. A new box is a new picture to the terminal (another key,
     // another source), so it scales the file again instead of cropping the
     // one it placed for the old box.
     const framed = (item: MediaItem, file: string, room: number, rows: number, act: HitProps['act']) => {
@@ -523,24 +720,20 @@ export const register: Register = on => {
       const hit: HitProps = { act, id: item.id, columns: room, rows: act === 'look' ? size.rows : rows }
 
       return (
-        <Box width={room} height={hit.rows}>
-          <Client key={`${act}-${item.id}`} module="./hit.tsx" props={hit} width={room} height={hit.rows} />
-          <Box
-            position="absolute"
-            top={Math.floor((hit.rows - size.rows) / 2)}
-            left={act === 'look' ? 0 : Math.floor((room - size.columns) / 2)}
-          >
-            {file === '' ? (
-              <Text dimColor>(önizleme yok)</Text>
-            ) : (
-              <Image
-                key={`${act}-${item.id}-${size.columns}x${size.rows}`}
-                source={{ file, format: 'png', generation: size.columns * 1000 + size.rows }}
-                columns={size.columns}
-                rows={size.rows}
-                alt={item.name}
-              />
-            )}
+        <Box width={room} height={hit.rows} justifyContent={act === 'look' ? 'flex-start' : 'center'} alignItems="center">
+          {file === '' ? (
+            <Text dimColor>(önizleme yok)</Text>
+          ) : (
+            <Image
+              key={`${act}-${item.id}-${size.columns}x${size.rows}`}
+              source={{ file, format: 'png', generation: size.columns * 1000 + size.rows }}
+              columns={size.columns}
+              rows={size.rows}
+              alt={item.name}
+            />
+          )}
+          <Box position="absolute" top={0} left={0}>
+            <Client key={`${act}-${item.id}`} module="./hit.tsx" props={hit} width={room} height={hit.rows} />
           </Box>
         </Box>
       )
@@ -567,7 +760,7 @@ export const register: Register = on => {
             variant={mode === 'all' ? 'primary' : 'secondary'}
             onPress={() => void choose($, 'all')}
           />
-          <Button key="clear" label="Temizle" onPress={() => void update($, items, () => [])} />
+          <Button key="clear" label="Temizle" onPress={() => void clear($)} />
           <Button key="close" label="Kapat" role="dismiss" onPress={() => void $.ui.close({ id: PANE })} />
         </Box>
         {main === undefined && (

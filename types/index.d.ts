@@ -26,6 +26,7 @@ declare module 'claude-code' {
       ratio: number
       selected: string | null
       filter: MediaFilter
+      webReady: boolean
     }
   }
 }

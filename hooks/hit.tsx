@@ -2,8 +2,8 @@ import type { ClientModule } from 'claude-code'
 
 export type HitProps = { act: 'pick' | 'look'; id: string; columns: number; rows: number }
 
-// An empty region that hears a click: the picture is drawn over it, and a
-// left click released inside it is posted to the hooks module.
+// An empty region that hears a click, laid over a picture: a left click
+// released inside it is posted to the hooks module.
 const Hit: ClientModule<HitProps> = (props, surface) => {
   const { Box } = surface.elements
 

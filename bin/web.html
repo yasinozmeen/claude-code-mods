@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Medya</title>
+<style>
+  :root {
+    --bg: #1f2023; --panel: #292b30; --line: #3a3d44; --text: #e6e7ea; --dim: #9aa0aa; --accent: #8ab4f8;
+    --ease: cubic-bezier(.2, .8, .2, 1);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); overflow: hidden;
+    font: 13px/1.4 ui-monospace, "SF Mono", Menlo, monospace; -webkit-font-smoothing: antialiased; }
+  #scroll { height: 100%; overflow: hidden; padding: 0 12px 24px; }
+  header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px;
+    padding: 10px 0; background: var(--bg); border-bottom: 1px solid var(--line); }
+  header b { font-size: 14px; }
+  header span { color: var(--dim); flex: 1; }
+  .chips { position: relative; display: flex; border: 1px solid var(--line); }
+  .chips button { all: unset; position: relative; z-index: 1; padding: 4px 12px; cursor: pointer; color: var(--dim);
+    transition: color .2s var(--ease); }
+  .chips button[aria-pressed="true"] { color: #10131a; }
+  .chips i { position: absolute; top: 0; bottom: 0; left: 0; width: 50%; background: var(--accent);
+    transition: transform .22s var(--ease); }
+  .chips[data-mode="all"] i { transform: translateX(100%); }
+  #stage { margin: 12px 0 6px; background: #121316; border: 1px solid var(--line); display: grid; place-items: center;
+    min-height: 120px; transition: height .25s var(--ease); overflow: hidden; }
+  #stage > * { max-width: 100%; max-height: var(--tall, 420px); display: block; animation: in .25s var(--ease); }
+  #stage iframe { width: 100%; height: var(--tall, 420px); border: 0; background: #fff; }
+  #stage audio { width: 100%; margin: 28px 0; }
+  #meta { display: flex; gap: 10px; align-items: baseline; margin-bottom: 14px; }
+  #meta b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #meta span { color: var(--dim); white-space: nowrap; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .card { all: unset; cursor: pointer; display: block; border: 1px solid var(--line); background: var(--panel);
+    transition: border-color .18s var(--ease), transform .18s var(--ease); animation: in .25s var(--ease); }
+  .card:hover { transform: translateY(-2px); border-color: var(--dim); }
+  .card[aria-current="true"] { border-color: var(--accent); }
+  .card .thumb { aspect-ratio: 16 / 10; background: #121316 center / contain no-repeat; }
+  .card .name { padding: 6px 8px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    transition: color .18s var(--ease); }
+  .card[aria-current="true"] .name, .card:hover .name { color: var(--text); }
+  #empty { color: var(--dim); padding: 40px 0; text-align: center; }
+  @keyframes in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div id="scroll">
+  <header>
+    <b>Medya</b><span id="count"></span>
+    <div class="chips" id="chips" data-mode="chat">
+      <i></i>
+      <button data-mode="chat" aria-pressed="true">Sohbet</button>
+      <button data-mode="all" aria-pressed="false">Hepsi</button>
+    </div>
+  </header>
+  <div id="stage"></div>
+  <div id="meta"></div>
+  <div id="grid"></div>
+  <div id="empty" hidden>Henüz medya yok.</div>
+</div>
+<script>
+document.documentElement.style.zoom = new URLSearchParams(location.search).get('zoom') ?? 1
+const LABEL = { image: 'resim', video: 'video', audio: 'ses', pdf: 'PDF', page: 'web sayfası' }
+const scroller = document.getElementById('scroll')
+const stage = document.getElementById('stage')
+const meta = document.getElementById('meta')
+const grid = document.getElementById('grid')
+const chips = document.getElementById('chips')
+let items = []
+let mode = 'chat'
+let current = null
+let drawn = ''
+
+const src = (item, as) => `/file?id=${item.id}${as ? `&as=${as}` : ''}`
+const shown = () => (mode === 'chat' ? items.filter(one => one.from === 'chat') : items)
+
+function show(item) {
+  current = item.id
+  let node
+
+  if (item.kind === 'video') {
+    node = Object.assign(document.createElement('video'), { src: src(item), controls: true, preload: 'auto' })
+  } else if (item.kind === 'audio') {
+    node = Object.assign(document.createElement('audio'), { src: src(item), controls: true })
+  } else if (item.kind === 'page') {
+    node = Object.assign(document.createElement('iframe'), { src: src(item) })
+  } else if (item.kind === 'pdf' || /\.(heic|tiff?|bmp)$/i.test(item.path)) {
+    node = Object.assign(new Image(), { src: src(item, 'preview') })
+  } else {
+    node = Object.assign(new Image(), { src: src(item) })
+  }
+
+  stage.replaceChildren(node)
+  meta.innerHTML = ''
+  meta.append(
+    Object.assign(document.createElement('b'), { textContent: item.name }),
+    Object.assign(document.createElement('span'), { textContent: `${LABEL[item.kind] ?? ''} · ${item.from === 'chat' ? 'sohbet' : 'araç'}` }),
+  )
+
+  for (const card of grid.children) {
+    card.setAttribute('aria-current', String(card.dataset.id === item.id))
+  }
+}
+
+function draw() {
+  const list = shown()
+  document.getElementById('count').textContent = `${list.length} dosya`
+  document.getElementById('empty').hidden = list.length > 0
+  stage.hidden = meta.hidden = list.length === 0
+  chips.dataset.mode = mode
+
+  for (const chip of chips.querySelectorAll('button')) {
+    chip.setAttribute('aria-pressed', String(chip.dataset.mode === mode))
+  }
+
+  const key = list.map(one => one.id).join()
+
+  if (key !== drawn) {
+    drawn = key
+    grid.replaceChildren(...list.map(item => {
+      const card = document.createElement('button')
+      card.className = 'card'
+      card.dataset.id = item.id
+      const thumb = document.createElement('div')
+      thumb.className = 'thumb'
+      thumb.style.backgroundImage = item.thumb ? `url("${src(item, 'thumb')}")` : 'none'
+      const name = Object.assign(document.createElement('div'), { className: 'name', textContent: item.name })
+      card.append(thumb, name)
+      card.addEventListener('click', () => { show(item); target = 0 })
+
+      return card
+    }))
+  }
+
+  const picked = list.find(one => one.id === current) ?? list[0]
+
+  if (picked !== undefined && (picked.id !== current || stage.childElementCount === 0)) {
+    show(picked)
+  } else if (picked !== undefined) {
+    for (const card of grid.children) {
+      card.setAttribute('aria-current', String(card.dataset.id === picked.id))
+    }
+  }
+}
+
+async function load() {
+  const got = await (await fetch('/items')).json()
+  const isNewest = got.items[0]?.id !== items[0]?.id
+  items = got.items
+
+  if (isNewest) {
+    current = null
+    target = 0
+  }
+
+  draw()
+}
+
+chips.addEventListener('click', event => {
+  const next = event.target.dataset?.mode
+
+  if (next) {
+    mode = next
+    current = null
+    draw()
+  }
+})
+
+// The wheel arrives in steps, a terminal's; the page eases toward where the
+// steps add up to, so what is streamed back moves evenly.
+let target = 0
+let position = 0
+// Called by the bridge for each wheel step: a wheel event of its own would
+// land in whatever is under the pointer, and an embedded page keeps it.
+function nudge(dy) {
+  const most = scroller.scrollHeight - scroller.clientHeight
+  target = Math.max(0, Math.min(most, target + dy))
+}
+
+addEventListener('wheel', event => {
+  event.preventDefault()
+  nudge(event.deltaY)
+}, { passive: false })
+
+function ease() {
+  const most = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+  target = Math.min(target, most)
+
+  if (Math.abs(target - position) > 0.4) {
+    position += (target - position) * 0.22
+    scroller.scrollTop = position
+  }
+
+  requestAnimationFrame(ease)
+}
+
+const fitStage = () => document.documentElement.style.setProperty('--tall', `${Math.round(scroller.clientHeight * 0.6)}px`)
+addEventListener('resize', fitStage)
+fitStage()
+new EventSource('/events').onmessage = () => void load()
+requestAnimationFrame(ease)
+</script>
+</body>
+</html>
