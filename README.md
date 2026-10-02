@@ -1,9 +1,10 @@
+
 # Vitrin
 
 Claude Code modu. Claude'un gönderdiği resim, video, PDF, ses ve web
 sayfalarını terminalden çıkmadan sağdaki panelde gösterir.
 
-[![Vitrin tanıtım videosu: izlemek için tıkla](docs/onizleme.png)](docs/vitrin-tanitim.mp4)
+https://github.com/user-attachments/assets/5ca8d5c2-73b8-4fbf-bb05-477b76b44e5b
 
 **[Tanıtım videosunu izle](docs/vitrin-tanitim.mp4)** (67 saniye, sesli)
 
