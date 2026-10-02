@@ -13,6 +13,7 @@ iletilir. Bu sayede kaydırma akıcıdır ve video panelin içinde sesli oynar.
 - Cevaptaki yola tıklamak paneli o dosyada açar.
 - `Sohbet` yalnızca cevaplarda geçen medyayı, `Hepsi` araçların ürettiklerini de gösterir.
 - `Büyüt` Finder'ın boşluk tuşu önizlemesini, `Aç` varsayılan uygulamayı açar.
+- `ctrl` ya da `option` basılıyken `Yolu kopyala` düğmesi `Dizini aç` olur: dosyayı Finder'da gösterir.
 
 | Komut | Ne yapar |
 | --- | --- |

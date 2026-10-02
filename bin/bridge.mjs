@@ -174,6 +174,10 @@ const server = http.createServer(async (req, res) => {
     const x = Math.round(Number(sent.x) * state.width * state.scale)
     const y = Math.round(Number(sent.y) * state.height * state.scale)
 
+    if (sent.kind === 'held' || sent.kind === 'click') {
+      await send('Runtime.evaluate', { expression: `hold(${sent.isHeld === true})` })
+    }
+
     if (sent.kind === 'click') {
       const press = { x, y, button: 'left', clickCount: 1 }
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })

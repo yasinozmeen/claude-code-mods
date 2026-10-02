@@ -239,6 +239,8 @@ async function act($: EngineInterface, sent: Act) {
     await ran($, ['/usr/bin/open', item.path])
   } else if (sent.act === 'copy') {
     await $.ui.copy({ text: item.path })
+  } else if (sent.act === 'reveal') {
+    await ran($, ['/usr/bin/open', '-R', item.path])
   }
 }
 
@@ -573,7 +575,7 @@ export const register: Register = on => {
       web.columns = sent.columns
       web.rows = sent.rows
       await measure($)
-    } else if (sent?.kind === 'click') {
+    } else if (sent?.kind === 'click' || sent?.kind === 'held') {
       await tell($, 'input', sent)
     }
 

@@ -69,7 +69,7 @@
   <div id="actions">
     <button class="act main" data-act="look">Büyüt</button>
     <button class="act" data-act="open">Aç</button>
-    <button class="act" data-act="copy">Yolu kopyala</button>
+    <button class="act" data-act="copy" id="copy">Yolu kopyala</button>
   </div>
   <div id="grid"></div>
   <div id="empty" hidden></div>
@@ -214,9 +214,29 @@ actions.addEventListener('click', event => {
 
   if (button.dataset.act === 'copy') {
     button.textContent = 'Kopyalandı'
-    setTimeout(() => (button.textContent = 'Yolu kopyala'), 1400)
+    setTimeout(() => label(), 1400)
   }
 })
+
+// With ctrl or alt down, the copy button shows the file in the Finder
+// instead; the bridge says when either goes down or up over the pane.
+const copy = document.getElementById('copy')
+let isHeld = false
+
+function label() {
+  const text = isHeld ? 'Dizini aç' : 'Yolu kopyala'
+
+  if (copy.textContent !== text) {
+    copy.textContent = text
+    copy.dataset.act = isHeld ? 'reveal' : 'copy'
+    copy.animate([{ opacity: 0.4 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' })
+  }
+}
+
+function hold(on) {
+  isHeld = on
+  label()
+}
 
 // Called by the bridge for each wheel step: a wheel event of its own would
 // land in whatever is under the pointer, and an embedded page keeps it. The
