@@ -4,8 +4,9 @@ const IMAGE = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'tif', 'tiff', 'heic'
 const VIDEO = ['mp4', 'mov', 'm4v', 'webm', 'mkv']
 const AUDIO = ['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg']
 const PAGE = ['html', 'htm']
+const DOC = ['md', 'markdown']
 // Longest first, so `.html` is not read as `.htm` and `.jpeg` as `.jpg`.
-const EXT = [...IMAGE, ...VIDEO, ...AUDIO, ...PAGE, 'pdf']
+const EXT = [...IMAGE, ...VIDEO, ...AUDIO, ...PAGE, ...DOC, 'pdf']
   .sort((a, b) => b.length - a.length)
   .join('|')
 
@@ -29,6 +30,10 @@ export function kindOf(path: string): MediaKind | undefined {
 
   if (PAGE.includes(ext)) {
     return 'page'
+  }
+
+  if (DOC.includes(ext)) {
+    return 'doc'
   }
 
   if (AUDIO.includes(ext)) {

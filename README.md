@@ -1,8 +1,8 @@
 
 # Vitrin
 
-Claude Code modu. Claude'un gönderdiği resim, video, PDF, ses ve web
-sayfalarını terminalden çıkmadan sağdaki panelde gösterir.
+Claude Code modu. Claude'un gönderdiği resim, video, PDF, ses, web sayfası ve
+markdown belgelerini terminalden çıkmadan sağdaki panelde gösterir.
 
 https://github.com/user-attachments/assets/5ca8d5c2-73b8-4fbf-bb05-477b76b44e5b
 

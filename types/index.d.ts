@@ -1,4 +1,4 @@
-export type MediaKind = 'image' | 'video' | 'audio' | 'pdf' | 'page'
+export type MediaKind = 'image' | 'video' | 'audio' | 'pdf' | 'page' | 'doc'
 
 // Where the mod learnt of a file: named in a reply, or made by a tool call.
 export type MediaSource = 'chat' | 'tool'

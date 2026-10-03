@@ -31,7 +31,7 @@ const TYPES = {
   svg: 'image/svg+xml', avif: 'image/avif', bmp: 'image/bmp', mp4: 'video/mp4', m4v: 'video/mp4',
   mov: 'video/quicktime', webm: 'video/webm', mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4',
   aac: 'audio/aac', flac: 'audio/flac', ogg: 'audio/ogg', pdf: 'application/pdf', html: 'text/html',
-  htm: 'text/html',
+  htm: 'text/html', md: 'text/markdown; charset=utf-8', markdown: 'text/markdown; charset=utf-8',
 }
 
 const say = line => process.stdout.write(`${line}\n`)
@@ -82,10 +82,15 @@ async function resize() {
 // Encoding a frame takes time in step with its pixels, so a page in motion
 // (a scroll, a drag, a playing video) is sent at half size and looks soft
 // while it moves; once it rests, one full-size frame makes it sharp again.
-const MOTION = { gapMs: 250, restMs: 350, settleMs: 500 }
+// A press's own short animation is not worth going soft for: motion counts
+// once it has lasted, or at once when the wheel is behind it.
+const MOTION = { gapMs: 250, restMs: 350, settleMs: 500, holdMs: 450, pushMs: 600 }
 let pace = 'sharp'
 let rest
 let lastFrame = 0
+// When the run of close frames began, and until when the wheel pushes.
+let began = 0
+let pushed = 0
 // Until when frames are the sharp one arriving, not motion.
 let settled = 0
 
@@ -111,7 +116,13 @@ async function repace(next) {
 // Two frames close together are motion; none for a while is rest.
 function paced() {
   const now = Date.now()
-  const isMoving = now - lastFrame < MOTION.gapMs && now > settled
+  const isClose = now - lastFrame < MOTION.gapMs
+
+  if (!isClose) {
+    began = now
+  }
+
+  const isMoving = isClose && now > settled && (now < pushed || now - began > MOTION.holdMs)
   lastFrame = now
   clearTimeout(rest)
 
@@ -211,6 +222,7 @@ async function play(sent) {
     await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...left, buttons: 0 })
     isDown = false
   } else if (sent.kind === 'wheel') {
+    pushed = Date.now() + MOTION.pushMs
     await send('Runtime.evaluate', { expression: `nudge(${Number(sent.dy) || 0})` })
   } else if (sent.kind === 'key') {
     await send('Runtime.evaluate', { expression: `key(${JSON.stringify(String(sent.key))})` })

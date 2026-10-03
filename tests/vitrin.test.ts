@@ -21,7 +21,7 @@ test('a reply\'s media paths are found, web links and other files are not', () =
   const text = [
     'Ekran görüntüsü: `/tmp/çıktı klasörü/ekran 1.png` ve /Users/x/video.mp4.',
     '[rapor](file:///tmp/a%20b.pdf), ~/resim.JPG, out/grafik.webp',
-    'https://example.com/logo.png ve notlar.md, `/tmp/çıktı klasörü/ekran 1.png`',
+    'https://example.com/logo.png ve notlar.txt, `/tmp/çıktı klasörü/ekran 1.png`',
   ].join('\n')
 
   expect(mediaPaths(text)).toEqual([
@@ -33,6 +33,8 @@ test('a reply\'s media paths are found, web links and other files are not', () =
   ])
   expect(kindOf('/a/b.MOV')).toBe('video')
   expect(kindOf('/a/b.txt')).toBeUndefined()
+  expect(kindOf('/a/PLAN.md')).toBe('doc')
+  expect(mediaPaths('bak: `notlar/plan.md` ve rapor.mdx')).toEqual(['notlar/plan.md'])
   expect(absolute('~/a.png', '/work', '/Users/x')).toBe('/Users/x/a.png')
   expect(absolute('out/a.png', '/work', '/Users/x')).toBe('/work/out/a.png')
 })
@@ -149,6 +151,25 @@ test('media reaches the page behind the pane; its buttons and a pressed path act
   await ui.key({ key: 'right', in: 'hit' })
   expect(posts.some(one => one.route === '/input' && one.body.kind === 'key' && one.body.key === 'right')).toBe(true)
   expect(await ui.find({ type: 'Image' })).toBeDefined()
+
+  // Cleared, the reply's path is still pressable, and the press brings the
+  // file back into the pane.
+  await $.command.run({
+    command: 'vitrin',
+    args: 'temizle',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: true, columns: 200 },
+  })
+  const again = await $.ui.mount({
+    plugin: 'vitrin',
+    surface: 'terminal',
+    component: 'AssistantMessage',
+    props: { text: 'İlk resim: `/tmp/bir.png`', isFirstOfReply: true },
+  })
+  await again.press({ key: 'reply', link: { href: 'file:///tmp/bir.png' } })
+  const back = posts.filter(one => one.route === '/items').at(-1)?.body as { items: { name: string }[]; pick: string }
+  expect(back.items.map(one => one.name)).toEqual(['bir.png'])
+  expect(back.pick).not.toBe('')
 
   stop()
   await $.command.run({

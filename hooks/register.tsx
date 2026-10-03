@@ -32,9 +32,15 @@ const filter = atom({ plugin: 'vitrin', key: 'filter' } as const, 'chat')
 const isReady = atom({ plugin: 'vitrin', key: 'isReady' } as const, false)
 
 // What a button of the page asks the mod to do.
-type Act = { act?: string; id?: string; mode?: string }
+type Act = { act?: string; id?: string; mode?: string; text?: string }
 
 const busy = new Set<string>()
+// Every file the pane has held this session: a reply's path to one stays a
+// link after the list is cleared, and a press brings the file back.
+const named = new Set<string>()
+// Paths a reply named that were not files when looked for; forgotten when
+// new files are taken in, since one of them may be there by then.
+const absent = new Set<string>()
 const place = { home: '', cwd: '' }
 // The bridge as this module knows it: its port once it listens, the newest
 // frame, the pane's size in cells, the key the picture is drawn under, and
@@ -90,7 +96,7 @@ async function thumbnail($: EngineInterface, source: string, preview: string, di
 
 // A PNG of the file, at most MAX_EDGE pixels a side: the picture itself, a
 // PDF's first page, a frame from a video's first second, a sound's waveform,
-// or Quick Look's thumbnail of a web page.
+// or Quick Look's thumbnail of a web page or a markdown file.
 async function previewOf($: EngineInterface, item: MediaItem, dir: string) {
   if (await $.fs.exists(item.preview)) {
     return
@@ -119,7 +125,7 @@ async function previewOf($: EngineInterface, item: MediaItem, dir: string) {
     if (item.kind === 'audio') {
       return
     }
-  } else if (item.kind !== 'page' && !item.path.toLowerCase().endsWith('.svg')) {
+  } else if (item.kind !== 'page' && item.kind !== 'doc' && !item.path.toLowerCase().endsWith('.svg')) {
     const size = await sizeOf($, item.path)
     const isLarge = size === undefined || Math.max(size.width, size.height) > MAX_EDGE
     const resize = isLarge ? ['-Z', String(MAX_EDGE)] : []
@@ -225,6 +231,17 @@ async function act($: EngineInterface, sent: Act) {
 
   if (sent.act === 'filter') {
     await choose($, sent.mode === 'all' ? 'all' : 'chat')
+
+    return
+  }
+
+  // Text selected in a document: cmd+C stays with the terminal, so letting
+  // go of the selection is what copies it.
+  if (sent.act === 'text') {
+    if (typeof sent.text === 'string' && sent.text !== '') {
+      await $.ui.copy({ text: sent.text.slice(0, 200_000) })
+      $.ui.toast('Seçim kopyalandı')
+    }
 
     return
   }
@@ -359,6 +376,8 @@ async function ingest(
         continue
       }
 
+      named.add(path)
+      absent.clear()
       const id = hashOf(`${path}:${stat.mtimeMs}:${stat.size}`)
       const known = (await read($, items)).find(one => one.id === id)
 
@@ -416,8 +435,9 @@ async function ingest(
 }
 
 // The media a tool call made: the files its input or output names that were
-// written while it ran. Web pages are left to the chat, where naming one says
-// it is meant to be seen; a tool writing one is editing code.
+// written while it ran. Web pages and markdown are left to the chat, where
+// naming one says it is meant to be seen; a tool writing one is editing code
+// or notes.
 async function capture($: EngineInterface, input: string, output: string, since: number) {
   const text = `${input}\n${output}`.slice(0, 200_000)
 
@@ -426,7 +446,7 @@ async function capture($: EngineInterface, input: string, output: string, since:
   }
 
   const made = mediaPaths(text)
-    .filter(path => kindOf(path) !== 'page')
+    .filter(path => !['page', 'doc'].includes(kindOf(path) ?? ''))
     .slice(0, 40)
   await ingest($, made, 'tool', since - FRESH_MS, PER_CALL)
 }
@@ -450,6 +470,9 @@ async function jump($: EngineInterface, href: string) {
   const item = (await read($, items)).find(one => one.path === path)
 
   if (item === undefined) {
+    // Cleared from the list since the reply named it: taken in again.
+    await ingest($, [path], 'chat')
+
     return
   }
 
@@ -650,10 +673,21 @@ export const register: Register = on => {
 
     const list = await read($, items)
     const { home, cwd } = place.home === '' ? await located($) : place
+
+    // A file the pane never held (named before the mod loaded, or cleared
+    // in an earlier session) is pressable too, as long as it is still there.
+    for (const spelled of mediaPaths(reply).slice(0, 40)) {
+      const path = absolute(spelled, cwd, home)
+
+      if (!named.has(path) && !absent.has(path)) {
+        ;((await $.fs.exists(path)) ? named : absent).add(path)
+      }
+    }
+
     const made = linked(reply, spelled => {
       const path = absolute(spelled, cwd, home)
 
-      return list.some(one => one.path === path) ? hrefOf(path) : undefined
+      return named.has(path) || list.some(one => one.path === path) ? hrefOf(path) : undefined
     })
 
     if (made.links.length === 0) {
