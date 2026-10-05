@@ -22,7 +22,7 @@ belgelerini terminalden çıkmadan sağdaki panelde gösterir.
 Arka arkaya çalışan araçları tek satıra katlar, senin mesajlarını ve Claude'un
 yazılarını seçtiğin renkle vurgular.
 
-Ekran görüntüsü henüz eklenmedi.
+[![Vurgu: katlanmış araçlar, renkli mesajlar ve renk paneli](vurgu/docs/onizleme.png)](vurgu/)
 
 [Ayrıntılar ve kurulum](vurgu/README.md)
 

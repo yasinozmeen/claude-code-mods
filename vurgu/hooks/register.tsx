@@ -31,6 +31,8 @@ const colors = atom({ plugin: 'vurgu', key: 'colors' } as const, DEFAULTS)
 const ara = atom({ plugin: 'vurgu', key: 'ara' } as const, [] as string[])
 // The reply text drawn last in this turn; a tool call after it makes it mid-work.
 const latest = { id: '' }
+// The reply texts already drawn once.
+const seen = new Set<string>()
 // The runs of tool calls, each drawn as one line, and the runs opened out.
 const runs = atom({ plugin: 'vurgu', key: 'runs' } as const, [] as Run[])
 const open = atom({ plugin: 'vurgu', key: 'open' } as const, [] as string[])
@@ -342,8 +344,16 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
-    live.isBroken = true
-    latest.id = e.requestId
+
+    // A text seen for the first time is new in this turn: it ends the run of
+    // tool calls before it. A row drawn again (a colour changed, the window
+    // scrolled) says nothing new.
+    if (!seen.has(e.requestId)) {
+      seen.add(e.requestId)
+      live.isBroken = true
+      latest.id = e.requestId
+    }
+
     const now = await read($, colors)
     const tone = (await read($, ara)).includes(e.requestId) ? now.ara : now.son
 

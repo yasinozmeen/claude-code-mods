@@ -3,6 +3,8 @@
 Claude Code modu. Uzun bir çalışmada asıl okunacak şeyi, yani yazıları öne
 çıkarır.
 
+![Katlanmış araçlar, renkli mesajlar ve sağda renk paneli](docs/onizleme.png)
+
 - **Araçları katlar.** Arka arkaya çalışan araçlar tek soluk satır olur:
   `▸ 4 işlem · Bash ×3, Edit`. Satıra tıklayınca açılır; açıkken her aracın
   üstündeki satıra tıklamak yeniden katlar. Çalışmakta olan ve hata veren araç
