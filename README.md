@@ -15,6 +15,8 @@ iletilir. Bu sayede kaydırma akıcıdır ve video panelin içinde sesli oynar.
 - Claude bir medya dosyasının yolunu cevabına yazınca panel kendiliğinden açılır.
 - Cevaptaki yola tıklamak paneli o dosyada açar.
 - `Sohbet` yalnızca cevaplarda geçen medyayı, `Hepsi` araçların ürettiklerini de gösterir.
+- Küçük resmin köşesindeki çarpı o dosyayı listeden çıkarır, üst çubuktaki çöp kutusu listeyi boşaltır; dosyalar diskte kalır.
+- Uzun bir markdown belgesi kendi penceresinde kaydırılır; seçilen yazı fare bırakılınca panoya kopyalanır.
 - `Büyüt` Finder'ın boşluk tuşu önizlemesini, `Aç` varsayılan uygulamayı açar.
 - Panele bir kez tıkladıktan sonra ok tuşları medyalar arasında gezdirir, boşluk ya da Enter seçili medyayı büyütür.
 - `ctrl` ya da `option` ile ikinci bir medyaya tıklamak ikisini karşılaştırır. Aynı biçimdeki iki resim (önce/sonra) üst üste gelir ve ayırıcı sürüklenir; diğerleri yan yana durur. İki resimde düğmeyle ikisi arasında geçilir.

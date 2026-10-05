@@ -260,6 +260,10 @@ async function act($: EngineInterface, sent: Act) {
     await $.ui.copy({ text: item.path })
   } else if (sent.act === 'reveal') {
     await ran($, ['/usr/bin/open', '-R', item.path])
+  } else if (sent.act === 'remove') {
+    // Out of the list alone: the file is the person's and stays where it is.
+    await update($, items, list => list.filter(one => one.id !== item.id))
+    await sync($)
   }
 }
 
