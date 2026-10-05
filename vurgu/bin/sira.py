@@ -11,6 +11,7 @@ import json
 import os
 import sys
 
+SAID = {"SendUserFile"}
 found = glob.glob(os.path.expanduser(f"~/.claude/projects/*/{sys.argv[1]}.jsonl"))
 rows = []
 
@@ -50,7 +51,10 @@ for line in open(found[0], errors="ignore") if found else []:
     if kind == "assistant":
         for block in blocks:
             if isinstance(block, dict) and block.get("type") == "tool_use":
-                rows.append(f"t {block.get('id')} {block.get('name')}")
+                # A file sent to the person is something said, not work: it
+                # is not folded and it ends the run before it.
+                mark = "s" if block.get("name") in SAID else "t"
+                rows.append(f"{mark} {block.get('id')} {block.get('name')}")
 
     elif kind == "user" and has_text and not is_result:
         first = next((b.get("text") or "" for b in blocks if isinstance(b, dict) and b.get("type") == "text"), "")

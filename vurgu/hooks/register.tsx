@@ -7,6 +7,7 @@ type Who = 'ben' | 'claude'
 type Row = { id: string; who: Who | 'arac'; isMid: boolean; tool: string }
 
 const PANE = 'vurgu'
+const SAID = ['SendUserFile']
 const KINDS = [
   { key: 'ben', label: 'Senin mesajların' },
   { key: 'son', label: 'Claude: kapanış mesajı' },
@@ -48,6 +49,7 @@ async function ordered($: EngineInterface): Promise<Row[]> {
       .map(line => {
         const [mark = '', id = '', tool = ''] = line.split(' ')
         const who = mark === 'b' ? ('ben' as const) : mark === 't' ? ('arac' as const) : ('claude' as const)
+        // A file sent to the person (`s`) counts as something Claude said.
 
         return { id, who, isMid: mark === 'a', tool }
       })
@@ -226,6 +228,14 @@ export const register: Register = on => {
 
     if (mid !== '' && !(await read($, ara)).includes(mid)) {
       await update($, ara, list => [...list, mid].slice(-600))
+    }
+
+    // A file sent to the person is something said, not work: it is never
+    // folded, and the calls after it start a run of their own.
+    if (SAID.includes(e.tool)) {
+      live.isBroken = true
+
+      return next(e)
     }
 
     // The call joins the run before it, or starts one after a reply's text.

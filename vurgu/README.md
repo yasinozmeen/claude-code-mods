@@ -7,6 +7,7 @@ Claude Code modu. Uzun bir çalışmada asıl okunacak şeyi, yani yazıları ö
   `▸ 4 işlem · Bash ×3, Edit`. Satıra tıklayınca açılır; açıkken her aracın
   üstündeki satıra tıklamak yeniden katlar. Çalışmakta olan ve hata veren araç
   gizlenmez. Araya yazı girince grup orada bölünür, yazı hiçbir zaman gizlenmez.
+  Claude'un sana gönderdiği dosyalar da gizlenmez.
 - **Mesajları renklendirir.** Üç tür ayrı renk alır: senin mesajların, Claude'un
   iş arasında yazdıkları (ardından araç çalıştırdığı yazılar) ve kapanış mesajı.
 

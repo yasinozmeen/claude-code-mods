@@ -722,12 +722,11 @@ export const register: Register = on => {
 
       links.push(href)
 
-      return `[${file}](${href})`
+      return `[${home !== '' && file.startsWith(`${home}/`) ? `~${file.slice(home.length)}` : file}](${href})`
     }
-    const text =
-      e.props.tool === 'Read'
-        ? `**Read**(${linkOf(files[0] ?? '')})`
-        : files.map(file => `› ${LABELS[kindOf(file) ?? 'doc'] ?? 'dosya'} ${linkOf(file)}`).join('  \n')
+    const caption = typeof given.caption === 'string' && given.caption.trim() !== '' ? given.caption.trim() : 'Dosya gönderildi'
+    const listed = files.map(file => `› ${LABELS[kindOf(file) ?? ''] ?? '[dosya]'} ${linkOf(file)}`).join('  \n')
+    const text = e.props.tool === 'Read' ? `**Read**(${linkOf(files[0] ?? '')})` : `${caption}\n\n${listed}`
     const mark = e.props.isErrored ? { color: 'red' } : e.props.isRunning ? { dimColor: true } : { color: 'green' }
 
     return (
