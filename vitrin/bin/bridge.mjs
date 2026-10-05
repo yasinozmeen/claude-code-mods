@@ -62,6 +62,8 @@ function changed() {
   for (const res of listeners) {
     res.write(`data: ${state.version}\n\n`)
   }
+
+  expectFrame()
 }
 
 // The page is laid out in terminal points and drawn at `scale` device pixels
@@ -134,6 +136,23 @@ function paced() {
       void repace('sharp')
     }, MOTION.restMs)
   }
+}
+
+// The browser now and then sends no frame for a change (seen when the last
+// file left the list: the page was empty, the pane still showed the file).
+// So after anything that may change the page, a frame is waited for, and
+// when none came the screencast is started again, which always sends one.
+let watch
+
+function expectFrame() {
+  const asked = Date.now()
+  clearTimeout(watch)
+  watch = setTimeout(() => {
+    if (lastFrame < asked) {
+      pace = 'sharp'
+      void resize()
+    }
+  }, 450)
 }
 
 function body(req) {
@@ -282,6 +301,10 @@ const server = http.createServer(async (req, res) => {
     // before the drag and the release that follow it.
     inputs = inputs.then(() => play(sent))
     await inputs
+
+    if (sent.kind === 'up' || sent.kind === 'key') {
+      expectFrame()
+    }
     res.writeHead(204).end()
   } else if (req.method === 'POST' && url.pathname === '/act') {
     say(`ACT ${JSON.stringify(await body(req))}`)

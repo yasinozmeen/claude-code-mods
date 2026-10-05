@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { absolute, hrefOf, kindOf, linked, mediaPaths, pathOf } from '../hooks/paths'
+import { absolute, hashOf, hrefOf, kindOf, linked, mediaPaths, pathOf } from '../hooks/paths'
 
 const PANE = {
   plugin: 'vitrin',
@@ -212,4 +212,58 @@ test('outside a terminal the mod keeps still: nothing opens, nothing is taken in
   expect(JSON.stringify(done)).toContain('yalnızca terminalde')
   expect(opened).toEqual([])
   expect(stats).toEqual([])
+})
+
+test('the last file is taken out of the list by its own button', async ($, on) => {
+  mock.clock(on, { now: 1000 })
+  mock.store(on)
+  const posts: { route: string; body: Record<string, unknown> }[] = []
+  on('env.get', () => ({ value: '/Users/x' }))
+  on('session.cwd', () => ({ value: '/work' }))
+  on('session.id', () => ({ value: 'oturum' }))
+  on('session.messages', () => ({ value: [] }))
+  on('session.surfaces', () => ({ value: ['terminal' as const] }))
+  on('ui.panes', () => ({ value: [] }))
+  on('fs.stat', () => ({ value: { kind: 'file' as const, size: 10, mtimeMs: 5000, isLink: false } }))
+  on('fs.exists', () => ({ value: true }))
+  on('process.run', () => ({
+    value: { exitCode: 0, stdout: '  pixelWidth: 800\n  pixelHeight: 400\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
+  }))
+  let hold = () => {}
+  const held = new Promise<void>(resolve => (hold = resolve))
+  let stop = () => {}
+  const stopped = new Promise<void>(resolve => (stop = resolve))
+  on('process.spawn', async function* () {
+    yield { stream: 'stdout' as const, text: 'READY 4321\n' }
+    // The button is pressed once the page holds the file.
+    await held
+    yield { stream: 'stdout' as const, text: `ACT {"act":"remove","id":"${hashOf('/tmp/bir.png:5000:10')}"}\n` }
+    await stopped
+
+    return { value: { code: 0, signal: null } }
+  })
+  on('http.fetch', (_, e) => {
+    posts.push({ route: new URL(e.url).pathname, body: JSON.parse(e.init?.body ?? '{}') })
+
+    if ((posts.at(-1)?.body.items as unknown[] | undefined)?.length === 1) {
+      hold()
+    }
+
+    return { value: { status: 204, ok: true, headers: {}, text: '' } }
+  })
+  on('ui.open', () => ({ value: { isPlaced: true as const } }))
+  on('ui.blit', () => ({ value: {} }))
+  on('ui.close', () => ({ value: undefined }))
+
+  await $.command.run({
+    command: 'vitrin',
+    args: '/tmp/bir.png',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: true, columns: 200 },
+  })
+  // The bridge's lines are read after the command has answered.
+  await new Promise(resolve => setTimeout(resolve, 50))
+  const lists = posts.filter(one => one.route === '/items').map(one => (one.body.items as unknown[]).length)
+  expect(lists.at(-1)).toBe(0)
+  stop()
 })
