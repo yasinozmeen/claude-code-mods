@@ -64,6 +64,7 @@ test('media reaches the page behind the pane; its buttons and a pressed path act
   on('session.id', () => ({ value: 'oturum' }))
   on('session.messages', () => ({ value: [] }))
   on('ui.panes', () => ({ value: [] }))
+  on('session.surfaces', () => ({ value: ['terminal' as const] }))
   on('fs.stat', () => ({ value: { kind: 'file' as const, size: 10, mtimeMs: 5000, isLink: false } }))
   on('fs.exists', () => ({ value: true }))
   on('process.run', (_, e) => {
@@ -178,4 +179,37 @@ test('media reaches the page behind the pane; its buttons and a pressed path act
     origin: { kind: 'composer' },
     presentation: { isFullscreen: true, columns: 200 },
   })
+})
+
+test('outside a terminal the mod keeps still: nothing opens, nothing is taken in', async ($, on) => {
+  mock.clock(on, { now: 1000 })
+  mock.store(on)
+  const opened: string[] = []
+  const stats: string[] = []
+  on('env.get', () => ({ value: '/Users/x' }))
+  on('session.cwd', () => ({ value: '/work' }))
+  on('session.id', () => ({ value: 'oturum' }))
+  on('session.messages', () => ({ value: [] }))
+  on('session.surfaces', () => ({ value: ['desktop' as const] }))
+  on('ui.panes', () => ({ value: [] }))
+  on('fs.stat', (_, e) => {
+    stats.push(e.path)
+
+    return { value: { kind: 'file' as const, size: 10, mtimeMs: 5000, isLink: false } }
+  })
+  on('ui.open', (_, e) => {
+    opened.push(e.id)
+
+    return { value: { isPlaced: true as const } }
+  })
+
+  const done = await $.command.run({
+    command: 'vitrin',
+    args: '/tmp/bir.png',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: true, columns: 200 },
+  })
+  expect(JSON.stringify(done)).toContain('yalnızca terminalde')
+  expect(opened).toEqual([])
+  expect(stats).toEqual([])
 })

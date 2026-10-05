@@ -45,7 +45,7 @@ const place = { home: '', cwd: '' }
 // The bridge as this module knows it: its port once it listens, the newest
 // frame, the pane's size in cells, the key the picture is drawn under, and
 // a file the page has yet to be told to show.
-const web = { port: 0, isStarting: false, file: '', seq: 0, columns: 0, rows: 0, key: 'view', pick: '' }
+const web = { x: 0.5, y: 0, port: 0, isStarting: false, file: '', seq: 0, columns: 0, rows: 0, key: 'view', pick: '' }
 
 // Every string a tool call's input holds, a few levels down.
 function strings(value: unknown, depth = 3): string[] {
@@ -329,6 +329,13 @@ async function stream($: EngineInterface) {
 
 // Opens the pane and starts the page behind it; where the terminal is too
 // narrow for a pane nobody asked for, a toast says how to open it.
+// Whether the session draws in a terminal. The pane is a picture only a
+// terminal shows, so in the desktop app and the other surfaces the mod keeps
+// still: it takes nothing in and opens nothing.
+async function inTerminal($: EngineInterface): Promise<boolean> {
+  return (await $.session.surfaces()).includes('terminal')
+}
+
 async function show($: EngineInterface) {
   const opened = await $.ui.open({ id: PANE, title: TITLE, columns: COLUMNS })
 
@@ -350,7 +357,7 @@ async function ingest(
   since = 0,
   most = KEEP,
 ): Promise<number> {
-  if (paths.length === 0) {
+  if (paths.length === 0 || !(await inTerminal($))) {
     return 0
   }
 
@@ -469,6 +476,10 @@ async function jump($: EngineInterface, href: string) {
   const path = pathOf(href)
   const item = (await read($, items)).find(one => one.path === path)
 
+  if (!(await inTerminal($))) {
+    return
+  }
+
   if (item === undefined) {
     // Cleared from the list since the reply named it: taken in again.
     await ingest($, [path], 'chat')
@@ -540,6 +551,10 @@ export const register: Register = on => {
   on('command.run', { command: 'vitrin' }, async ($, e) => {
     const args = e.args.trim()
 
+    if (!(await inTerminal($))) {
+      return { text: 'Vitrin yalnızca terminalde çalışır.' }
+    }
+
     if (args === 'kapat') {
       await $.ui.close({ id: PANE })
 
@@ -601,16 +616,25 @@ export const register: Register = on => {
       web.rows = sent.rows
       await measure($)
     } else if (sent !== undefined) {
-      await tell($, 'input', sent)
+      if ('x' in sent) {
+        web.x = sent.x
+        web.y = sent.y
+      }
+
+      // Where the pointer rests is kept for the wheel; the page is not told.
+      if (sent.kind !== 'at') {
+        await tell($, 'input', sent)
+      }
     }
 
     return next(e)
   })
 
   // The wheel over the pane moves the page, not the pane: the pane's own
-  // window has nowhere to go.
+  // window has nowhere to go. The page is told where the pointer is, since
+  // a document shown in it scrolls on its own under the pointer.
   on('ui.scroll', { requestId: PANE }, ($, e) => {
-    void tell($, 'input', { kind: 'wheel', dy: e.by * WHEEL_PIXELS })
+    void tell($, 'input', { kind: 'wheel', dy: e.by * WHEEL_PIXELS, x: web.x, y: web.y })
 
     return {}
   })

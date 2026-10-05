@@ -8,15 +8,17 @@ export type HitPost =
   | { kind: 'size'; columns: number; rows: number }
   | { kind: 'down' | 'move' | 'up'; x: number; y: number; mods: number }
   | { kind: 'held'; mods: number }
+  | { kind: 'at'; x: number; y: number }
   | { kind: 'key'; key: string }
 
-// What the region remembers between calls: its size, and the modifier keys
-// down at the last pointer event.
-type HitState = HitProps & { mods: number }
+// What the region remembers between calls: its size, the modifier keys down
+// at the last pointer event, and the cell the pointer was last said to be at.
+type HitState = HitProps & { mods: number; cx?: number; cy?: number }
 
 // The empty region over the pane's picture. It says how large it is, posts
 // the pointer's presses and drags as points from 0 to 1 across and down,
-// says when a modifier goes down or up while the pointer is over it, and,
+// says when a modifier goes down or up while the pointer is over it and
+// where the pointer rests (the wheel has no place of its own), and,
 // once a click has given it the keyboard, posts the keys pressed.
 const Hit: ClientModule<HitProps, HitState> = (props, surface) => {
   const { Box } = surface.elements
@@ -41,8 +43,16 @@ const Hit: ClientModule<HitProps, HitState> = (props, surface) => {
     } else if (event.type === 'move' && event.button !== undefined) {
       surface.post({ kind: 'move', ...point })
     } else if (event.type === 'move' && mods !== (surface.state?.mods ?? 0)) {
-      surface.setState({ columns: props.columns, rows: props.rows, mods })
+      surface.setState({ ...surface.state, columns: props.columns, rows: props.rows, mods })
       surface.post({ kind: 'held', mods })
+    } else if (event.type === 'move' && isInside) {
+      const was = surface.state
+
+      // Said a few cells apart, not at every cell crossed.
+      if (was?.cx === undefined || was.cy === undefined || Math.abs(event.x - was.cx) > 2 || event.y !== was.cy) {
+        surface.setState({ columns: props.columns, rows: props.rows, mods, cx: event.x, cy: event.y })
+        surface.post({ kind: 'at', x: point.x, y: point.y })
+      }
     }
   })
 

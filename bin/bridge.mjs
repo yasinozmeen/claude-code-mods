@@ -223,7 +223,9 @@ async function play(sent) {
     isDown = false
   } else if (sent.kind === 'wheel') {
     pushed = Date.now() + MOTION.pushMs
-    await send('Runtime.evaluate', { expression: `nudge(${Number(sent.dy) || 0})` })
+    await send('Runtime.evaluate', {
+      expression: `nudge(${Number(sent.dy) || 0}, ${Number(sent.x) || 0}, ${Number(sent.y) || 0})`,
+    })
   } else if (sent.kind === 'key') {
     await send('Runtime.evaluate', { expression: `key(${JSON.stringify(String(sent.key))})` })
   }

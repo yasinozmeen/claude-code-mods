@@ -40,10 +40,16 @@
   #stage > * { max-width: 100%; max-height: var(--tall, 420px); display: block; animation: in .25s var(--ease); }
   #stage iframe { width: 100%; height: var(--tall, 420px); border: 0; background: #fff; }
   #stage audio { width: 100%; margin: 28px 0; }
-  /* A markdown file is read, not looked at: as wide as the stage and as tall
-     as its text, which the page's own scroll moves through. */
-  #stage .doc, #stage .pair > div > .doc { justify-self: stretch; align-self: start; max-height: none;
-    padding: 4px 18px 18px; user-select: text; cursor: text; font: 14px/1.6 -apple-system, "Helvetica Neue", sans-serif; overflow-wrap: anywhere; }
+  /* A markdown file is read, not looked at: as wide as the stage, and a
+     window of its own over a long text, which the wheel moves while the
+     pointer is over it. */
+  #stage .doc, #stage .pair > div > .doc { justify-self: stretch; align-self: start; max-height: var(--tall, 420px);
+    overflow-y: hidden; padding: 4px 18px 18px; user-select: text; cursor: text; font: 14px/1.6 -apple-system, "Helvetica Neue", sans-serif; overflow-wrap: anywhere; }
+  /* How far through the text the window is: a mark down its right edge,
+     kept in place while the text moves under it. */
+  .doc .far { position: sticky; top: 0; height: 0; user-select: none; }
+  .doc .far i { position: absolute; right: -13px; width: 4px; background: var(--dim); opacity: .7;
+    transition: opacity .2s var(--ease); }
   .doc ::selection { background: #8ab4f855; }
   .doc h1, .doc h2, .doc h3, .doc h4 { margin: 1.2em 0 .4em; line-height: 1.25; }
   .doc h1 { font-size: 22px; } .doc h2 { font-size: 18px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
@@ -150,6 +156,10 @@ let target = 0
 let position = 0
 // The modifier keys the pane last reported: 1 alt, 2 ctrl.
 let mods = 0
+// How far down each document was read, by its id.
+const read = new Map()
+// The document the wheel is moving, where it is heading and where it is.
+const inner = { doc: null, target: 0, position: 0 }
 
 const src = (item, as) => `/file?id=${item.id}${as ? `&as=${as}` : ''}`
 const shown = () => (mode === 'chat' ? items.filter(one => one.from === 'chat') : items)
@@ -181,8 +191,28 @@ function nodeFor(item) {
 
   if (item.kind === 'doc') {
     const doc = Object.assign(document.createElement('div'), { className: 'doc' })
+    doc.dataset.id = item.id
     void fetch(src(item)).then(got => got.text()).then(text => {
       doc.innerHTML = marked(text)
+      // Back where it was left when another file was looked at meanwhile.
+      const far = Object.assign(document.createElement('div'), { className: 'far' })
+      const mark = far.appendChild(document.createElement('i'))
+      doc.prepend(far)
+      const place = () => {
+        const room = doc.scrollHeight - doc.clientHeight
+        const tall = Math.max(24, (doc.clientHeight * doc.clientHeight) / doc.scrollHeight)
+        mark.hidden = room < 1
+        mark.style.height = `${tall}px`
+        mark.style.top = `${(doc.scrollTop / Math.max(1, room)) * (doc.clientHeight - tall - 8)}px`
+      }
+
+      doc.scrollTop = read.get(item.id) ?? 0
+      doc.addEventListener('scroll', () => {
+        read.set(item.id, doc.scrollTop)
+        place()
+      })
+      addEventListener('resize', place)
+      place()
     })
 
     return doc
@@ -252,7 +282,8 @@ function listed(lines, at, indent) {
 
 // A markdown file as HTML: the blocks a note or a plan is written in.
 function marked(text) {
-  const lines = text.replace(/\r\n?/g, '\n').replace(/^---\n[\s\S]*?\n---\n/, '').split('\n')
+  // A comment is a note to whoever edits the file, not part of what is read.
+  const lines = text.replace(/\r\n?/g, '\n').replace(/^---\n[\s\S]*?\n---\n/, '').replace(/<!--[\s\S]*?-->/g, '').split('\n')
   const out = []
   let i = 0
 
@@ -613,14 +644,60 @@ addEventListener('mouseup', () => {
 // land in whatever is under the pointer, and an embedded page keeps it. The
 // steps are a terminal's; the page eases toward where they add up to, so
 // what is streamed back moves evenly.
-function nudge(dy) {
+function nudge(dy, x, y) {
+  const doc = docAt(x, y)
+
+  // A document under the pointer takes the wheel until it is at its end;
+  // from there the page moves, as it does everywhere else.
+  if (doc !== null) {
+    // Mid-flight the steps add up; at rest it starts from where the text
+    // is, which a drag of its bar may have moved.
+    const isFlying = inner.doc === doc && Math.abs(inner.target - inner.position) > 0.4
+    const from = isFlying ? inner.target : doc.scrollTop
+    const room = doc.scrollHeight - doc.clientHeight
+    const next = Math.max(0, Math.min(room, from + dy))
+
+    if (next !== from) {
+      if (!isFlying) {
+        inner.doc = doc
+        inner.position = doc.scrollTop
+      }
+
+      inner.target = next
+
+      return
+    }
+  }
+
   const most = scroller.scrollHeight - scroller.clientHeight
   target = Math.max(0, Math.min(most, target + dy))
 }
 
+// The document shown at a point of the window, given as shares of its width
+// and height; null where there is none.
+function docAt(x, y) {
+  if (typeof x !== 'number' || typeof y !== 'number') {
+    return null
+  }
+
+  const all = scroller.getBoundingClientRect()
+  const px = all.left + x * all.width
+  const py = all.top + y * all.height
+
+  for (const doc of stage.querySelectorAll('.doc')) {
+    const box = doc.getBoundingClientRect()
+
+    if (px >= box.left && px <= box.right && py >= box.top && py <= box.bottom) {
+      return doc
+    }
+  }
+
+  return null
+}
+
 addEventListener('wheel', event => {
   event.preventDefault()
-  nudge(event.deltaY)
+  nudge(event.deltaY, event.clientX / innerWidth, event.clientY / innerHeight)
 }, { passive: false })
 
 // Eased by the clock, not by the frame: a slow frame moves further, so the
@@ -636,6 +713,13 @@ function ease(now) {
   if (Math.abs(target - position) > 0.4) {
     position += (target - position) * share
     scroller.scrollTop = position
+  }
+
+  if (inner.doc !== null && !inner.doc.isConnected) {
+    inner.doc = null
+  } else if (inner.doc !== null && Math.abs(inner.target - inner.position) > 0.4) {
+    inner.position += (inner.target - inner.position) * share
+    inner.doc.scrollTop = inner.position
   }
 
   requestAnimationFrame(ease)
