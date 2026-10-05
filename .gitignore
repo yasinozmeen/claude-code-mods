@@ -1,0 +1,7 @@
+# Engine'in her yüklemede yeniden yazdığı tip dosyaları
+.claude-plugin/types/
+tsconfig.json
+# Derlenen yardımcılar
+vitrin/bin/onizle
+node_modules/
+.DS_Store
