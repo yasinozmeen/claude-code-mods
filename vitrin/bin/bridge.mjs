@@ -1,0 +1,370 @@
+// The browser behind the Vitrin pane: a headless browser draws the gallery
+// page, each frame it paints is written as a PNG the terminal reads, and the
+// clicks and wheel the pane hears are played back into the page.
+//
+//   node bridge.mjs <frame directory>
+//
+// stdout, one line each: `READY <port>` once the bridge listens, `F <file>
+// <seq>` per frame, `ACT <json>` for a button of the page the mod must act
+// on, `LOG <text>` for the rest. It ends with its parent.
+
+import { spawn } from 'node:child_process'
+import fs from 'node:fs'
+import http from 'node:http'
+import os from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const here = path.dirname(fileURLToPath(import.meta.url))
+const frames = process.argv[2] ?? path.join(os.tmpdir(), 'vitrin')
+const ROTATE = 16
+// The most pixels the page is drawn at: what keeps a scroll even.
+const PIXELS = 2_600_000
+const BROWSERS = [
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+  '/Applications/Chromium.app/Contents/MacOS/Chromium',
+  '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+]
+const TYPES = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+  svg: 'image/svg+xml', avif: 'image/avif', bmp: 'image/bmp', mp4: 'video/mp4', m4v: 'video/mp4',
+  mov: 'video/quicktime', webm: 'video/webm', mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4',
+  aac: 'audio/aac', flac: 'audio/flac', ogg: 'audio/ogg', pdf: 'application/pdf', html: 'text/html',
+  htm: 'text/html', md: 'text/markdown; charset=utf-8', markdown: 'text/markdown; charset=utf-8',
+}
+
+const say = line => process.stdout.write(`${line}\n`)
+const state = { items: [], filter: 'chat', pick: { id: '', n: 0 }, version: 0, width: 576, height: 900, scale: 2 }
+const listeners = new Set()
+let browser
+let socket
+let nextId = 1
+let seq = 0
+const waiting = new Map()
+
+fs.mkdirSync(frames, { recursive: true })
+
+function send(method, params = {}) {
+  if (socket?.readyState !== 1) {
+    return Promise.resolve(undefined)
+  }
+
+  const id = nextId++
+  socket.send(JSON.stringify({ id, method, params }))
+
+  return new Promise(resolve => waiting.set(id, resolve))
+}
+
+function changed() {
+  state.version += 1
+
+  for (const res of listeners) {
+    res.write(`data: ${state.version}\n\n`)
+  }
+}
+
+// The page is laid out in terminal points and drawn at `scale` device pixels
+// a point: the viewport is that many pixels and the page zooms itself, since a
+// screencast frame is the viewport's own size whatever the device scale.
+async function resize() {
+  await send('Emulation.setDeviceMetricsOverride', {
+    width: Math.round(state.width * state.scale),
+    height: Math.round(state.height * state.scale),
+    deviceScaleFactor: 1,
+    mobile: false,
+  })
+  await send('Runtime.evaluate', { expression: `document.documentElement.style.zoom = ${state.scale}` })
+  await send('Page.stopScreencast')
+  await cast()
+}
+
+// Encoding a frame takes time in step with its pixels, so a page in motion
+// (a scroll, a drag, a playing video) is sent at half size and looks soft
+// while it moves; once it rests, one full-size frame makes it sharp again.
+// A press's own short animation is not worth going soft for: motion counts
+// once it has lasted, or at once when the wheel is behind it.
+const MOTION = { gapMs: 250, restMs: 350, settleMs: 500, holdMs: 450, pushMs: 600 }
+let pace = 'sharp'
+let rest
+let lastFrame = 0
+// When the run of close frames began, and until when the wheel pushes.
+let began = 0
+let pushed = 0
+// Until when frames are the sharp one arriving, not motion.
+let settled = 0
+
+function cast() {
+  const share = pace === 'fast' ? 0.5 : 1
+
+  return send('Page.startScreencast', {
+    format: 'png',
+    everyNthFrame: 1,
+    maxWidth: Math.round(state.width * state.scale * share),
+    maxHeight: Math.round(state.height * state.scale * share),
+  })
+}
+
+async function repace(next) {
+  if (pace !== next) {
+    pace = next
+    await send('Page.stopScreencast')
+    await cast()
+  }
+}
+
+// Two frames close together are motion; none for a while is rest.
+function paced() {
+  const now = Date.now()
+  const isClose = now - lastFrame < MOTION.gapMs
+
+  if (!isClose) {
+    began = now
+  }
+
+  const isMoving = isClose && now > settled && (now < pushed || now - began > MOTION.holdMs)
+  lastFrame = now
+  clearTimeout(rest)
+
+  if (pace === 'sharp' && isMoving) {
+    void repace('fast')
+  } else if (pace === 'fast') {
+    rest = setTimeout(() => {
+      settled = Date.now() + MOTION.settleMs
+      void repace('sharp')
+    }, MOTION.restMs)
+  }
+}
+
+function body(req) {
+  return new Promise(resolve => {
+    let text = ''
+    req.on('data', piece => (text += piece))
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(text || '{}'))
+      } catch {
+        resolve({})
+      }
+    })
+  })
+}
+
+// One of the listed files, or its preview: whole, or the byte range a player
+// asks for. Nothing else on disk is served.
+function serve(req, res, url) {
+  const item = state.items.find(one => one.id === url.searchParams.get('id'))
+  const which = url.searchParams.get('as')
+  const file = item === undefined ? '' : which === 'thumb' ? item.thumb : which === 'preview' ? item.preview : item.path
+
+  if (file === '' || !fs.existsSync(file)) {
+    res.writeHead(404).end()
+
+    return
+  }
+
+  const size = fs.statSync(file).size
+  const type = TYPES[path.extname(file).slice(1).toLowerCase()] ?? 'application/octet-stream'
+  const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '')
+
+  if (range === null) {
+    res.writeHead(200, { 'content-type': type, 'content-length': size, 'accept-ranges': 'bytes' })
+    fs.createReadStream(file).pipe(res)
+
+    return
+  }
+
+  const start = range[1] === '' ? Math.max(0, size - Number(range[2])) : Number(range[1])
+  const end = range[1] !== '' && range[2] !== '' ? Math.min(Number(range[2]), size - 1) : size - 1
+  res.writeHead(206, {
+    'content-type': type,
+    'content-length': end - start + 1,
+    'content-range': `bytes ${start}-${end}/${size}`,
+    'accept-ranges': 'bytes',
+  })
+  fs.createReadStream(file, { start, end }).pipe(res)
+}
+
+let inputs = Promise.resolve()
+let isDown = false
+
+// Plays one thing the pane heard into the page. The modifier keys are told
+// to the page itself rather than given to the browser's mouse event, where
+// ctrl with a click is a context menu.
+async function play(sent) {
+  const x = Math.round(Number(sent.x) * state.width * state.scale)
+  const y = Math.round(Number(sent.y) * state.height * state.scale)
+  const left = { x, y, button: 'left', buttons: 1, clickCount: 1 }
+
+  // What reached the page, for telling a key the terminal kept from one the
+  // page ignored; drags and wheel steps would only fill it.
+  if (sent.kind !== 'move' && sent.kind !== 'wheel') {
+    fs.appendFileSync(path.join(frames, 'input.log'), `${new Date().toISOString()} ${JSON.stringify(sent)}\n`)
+  }
+
+  if (sent.mods !== undefined) {
+    await send('Runtime.evaluate', { expression: `hold(${Number(sent.mods) || 0})` })
+  }
+
+  if (sent.kind === 'down') {
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...left })
+    isDown = true
+  } else if (sent.kind === 'move' && isDown) {
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...left })
+  } else if (sent.kind === 'up') {
+    // A press and release within one frame arrive as the release alone.
+    if (!isDown) {
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...left })
+    }
+
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...left, buttons: 0 })
+    isDown = false
+  } else if (sent.kind === 'wheel') {
+    pushed = Date.now() + MOTION.pushMs
+    await send('Runtime.evaluate', {
+      expression: `nudge(${Number(sent.dy) || 0}, ${Number(sent.x) || 0}, ${Number(sent.y) || 0})`,
+    })
+  } else if (sent.kind === 'key') {
+    await send('Runtime.evaluate', { expression: `key(${JSON.stringify(String(sent.key))})` })
+  }
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+
+  if (req.method === 'GET' && url.pathname === '/') {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    res.end(fs.readFileSync(path.join(here, 'page.html')))
+  } else if (req.method === 'GET' && url.pathname === '/items') {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ items: state.items, filter: state.filter, pick: state.pick }))
+  } else if (req.method === 'GET' && url.pathname === '/events') {
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+    res.write(`data: ${state.version}\n\n`)
+    listeners.add(res)
+    req.on('close', () => listeners.delete(res))
+  } else if (req.method === 'GET' && url.pathname === '/file') {
+    serve(req, res, url)
+  } else if (req.method === 'POST' && url.pathname === '/items') {
+    const sent = await body(req)
+    state.items = Array.isArray(sent.items) ? sent.items : []
+    state.filter = sent.filter === 'all' ? 'all' : 'chat'
+
+    // A file the mod wants shown: counted, so the page shows it once.
+    if (typeof sent.pick === 'string' && sent.pick !== '') {
+      state.pick = { id: sent.pick, n: state.pick.n + 1 }
+    }
+
+    changed()
+    res.writeHead(204).end()
+  } else if (req.method === 'POST' && url.pathname === '/size') {
+    const sent = await body(req)
+    const width = Math.round(Number(sent.width))
+    const height = Math.round(Number(sent.height))
+
+    if (width > 50 && height > 50) {
+      state.width = width
+      state.height = height
+      // Sharp at two pixels a point while the pane is small; a large pane is
+      // drawn coarser, since the browser's work grows with its pixels.
+      state.scale = Math.max(1, Math.min(2, Math.sqrt(PIXELS / (width * height))))
+    }
+
+    // Asked again at the same size, the page is still sent afresh: a pane
+    // opened anew has no frame yet.
+    await resize()
+    res.writeHead(204).end()
+  } else if (req.method === 'POST' && url.pathname === '/input') {
+    const sent = await body(req)
+    // One at a time, in the order they came: a press must reach the page
+    // before the drag and the release that follow it.
+    inputs = inputs.then(() => play(sent))
+    await inputs
+    res.writeHead(204).end()
+  } else if (req.method === 'POST' && url.pathname === '/act') {
+    say(`ACT ${JSON.stringify(await body(req))}`)
+    res.writeHead(204).end()
+  } else if (req.method === 'POST' && url.pathname === '/quit') {
+    res.writeHead(204).end()
+    stop()
+  } else {
+    res.writeHead(404).end()
+  }
+})
+
+function stop() {
+  try {
+    browser?.kill('SIGKILL')
+  } catch {
+    // Already gone.
+  }
+
+  process.exit(0)
+}
+
+async function start(port) {
+  const binary = BROWSERS.find(one => fs.existsSync(one))
+
+  if (binary === undefined) {
+    say('LOG no Chromium-based browser found')
+    stop()
+  }
+
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'vitrin-'))
+  browser = spawn(binary, [
+    '--headless=new',
+    '--remote-debugging-port=0',
+    `--user-data-dir=${profile}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--hide-scrollbars',
+    '--autoplay-policy=no-user-gesture-required',
+    'about:blank',
+  ])
+  browser.on('exit', stop)
+
+  const debug = await new Promise(resolve => {
+    let text = ''
+    browser.stderr.on('data', piece => {
+      text += piece
+      const found = /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)\//.exec(text)
+
+      if (found !== null) {
+        resolve(found[1])
+      }
+    })
+  })
+  const pages = await (await fetch(`http://127.0.0.1:${debug}/json/list`)).json()
+  const page = pages.find(one => one.type === 'page')
+  socket = new WebSocket(page.webSocketDebuggerUrl)
+  socket.addEventListener('message', event => {
+    const message = JSON.parse(event.data)
+
+    if (message.id !== undefined) {
+      waiting.get(message.id)?.(message.result)
+      waiting.delete(message.id)
+    } else if (message.method === 'Page.screencastFrame') {
+      void send('Page.screencastFrameAck', { sessionId: message.params.sessionId })
+      seq += 1
+      paced()
+      const file = path.join(frames, `f${seq % ROTATE}.png`)
+      // Written beside and moved in, so the terminal never reads half a frame.
+      fs.writeFileSync(`${file}.tmp`, Buffer.from(message.params.data, 'base64'))
+      fs.renameSync(`${file}.tmp`, file)
+      say(`F ${file} ${seq}`)
+    }
+  })
+  await new Promise(resolve => socket.addEventListener('open', resolve))
+  await send('Page.enable')
+  await send('Page.navigate', { url: `http://127.0.0.1:${port}/?zoom=${state.scale}` })
+  await resize()
+  say(`READY ${port}`)
+}
+
+process.on('SIGTERM', stop)
+process.on('SIGINT', stop)
+// The parent closing the pipe is the parent going away.
+process.stdout.on('error', stop)
+server.listen(0, '127.0.0.1', () => void start(server.address().port))

@@ -1,0 +1,6 @@
+{
+  "name": "vitrin",
+  "version": "0.2.0",
+  "description": "Claude'un gönderdiği resim, video, PDF, ses ve web sayfalarını terminalden çıkmadan sağdaki panelde canlı bir sayfa olarak gösterir",
+  "types": "./types/index.d.ts"
+}
