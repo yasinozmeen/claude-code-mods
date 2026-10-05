@@ -1,7 +1,0 @@
-# Engine'in her yüklemede yeniden yazdığı tip dosyaları
-.claude-plugin/types/
-tsconfig.json
-# Derlenen yardımcı (kaynak: bin/onizle.swift)
-bin/onizle
-node_modules/
-.DS_Store

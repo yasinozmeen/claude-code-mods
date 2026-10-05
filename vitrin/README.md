@@ -40,15 +40,16 @@ içinde çalışmaz), Claude Code 2.1.287+, Node 22+, Chrome ya da Brave, ffmpeg
 Xcode komut satırı araçları (`swiftc`).
 
 ```sh
-git clone https://github.com/yasinozmeen/vitrin.git ~/vitrin
-cd ~/vitrin
+git clone https://github.com/yasinozmeen/claude-code-mods.git ~/claude-code-mods
+cd ~/claude-code-mods/vitrin
 swiftc -O bin/onizle.swift -o bin/onizle
 ```
 
-Ardından `~/.claude/settings.json` içindeki `env` bölümüne klasörün tam yolunu ekle:
+Ardından `~/.claude/settings.json` içindeki `env` bölümüne klasörü ekle
+(başka modlarla birlikte kullanmak için [ana README](../README.md#kurulum)):
 
 ```json
-"CLAUDE_CODE_PLUGIN_DIRS": "/Users/<kullanıcı adın>/vitrin"
+"CLAUDE_CODE_PLUGIN_DIRS": "~/claude-code-mods/vitrin"
 ```
 
 Yeni bir Claude Code oturumu aç ve `/vitrin` yaz.
