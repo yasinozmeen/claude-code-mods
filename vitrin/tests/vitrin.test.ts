@@ -229,8 +229,11 @@ test('the last file is taken out of the list by its own button', async ($, on) =
   on('process.run', () => ({
     value: { exitCode: 0, stdout: '  pixelWidth: 800\n  pixelHeight: 400\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
   }))
+  let isHeld = false
   let hold = () => {}
   const held = new Promise<void>(resolve => (hold = resolve))
+  let empty = () => {}
+  const emptied = new Promise<void>(resolve => (empty = resolve))
   let stop = () => {}
   const stopped = new Promise<void>(resolve => (stop = resolve))
   on('process.spawn', async function* () {
@@ -246,7 +249,10 @@ test('the last file is taken out of the list by its own button', async ($, on) =
     posts.push({ route: new URL(e.url).pathname, body: JSON.parse(e.init?.body ?? '{}') })
 
     if ((posts.at(-1)?.body.items as unknown[] | undefined)?.length === 1) {
+      isHeld = true
       hold()
+    } else if (isHeld && posts.at(-1)?.route === '/items') {
+      empty()
     }
 
     return { value: { status: 204, ok: true, headers: {}, text: '' } }
@@ -262,8 +268,41 @@ test('the last file is taken out of the list by its own button', async ($, on) =
     presentation: { isFullscreen: true, columns: 200 },
   })
   // The bridge's lines are read after the command has answered.
-  await new Promise(resolve => setTimeout(resolve, 50))
+  await emptied
   const lists = posts.filter(one => one.route === '/items').map(one => (one.body.items as unknown[]).length)
   expect(lists.at(-1)).toBe(0)
   stop()
+})
+
+test('a tool row naming a picture is drawn with the path pressable; other rows are the engine\'s', async ($, on) => {
+  on('env.get', () => ({ value: '/Users/x' }))
+  on('session.cwd', () => ({ value: '/work' }))
+  on('ui.render', { component: 'ToolUse' }, () => ({ type: 'Text', props: {}, children: ['engine'] }))
+  const props = { tool_use_id: 'bir', isRunning: false, isErrored: false, isInterrupted: false }
+
+  const picture = await $.ui.mount({
+    plugin: 'vitrin',
+    surface: 'terminal',
+    component: 'ToolUse',
+    props: { ...props, tool: 'Read', input: { file_path: '/tmp/ekran.png' } },
+  })
+  expect(JSON.stringify(await picture.find({ type: 'Markdown' }))).toContain('file:///tmp/ekran.png')
+
+  const code = await $.ui.mount({
+    plugin: 'vitrin',
+    surface: 'terminal',
+    component: 'ToolUse',
+    props: { ...props, tool: 'Read', input: { file_path: '/tmp/kod.ts' } },
+  })
+  expect(await code.find({ type: 'Markdown' })).toBeUndefined()
+
+  const sent = await $.ui.mount({
+    plugin: 'vitrin',
+    surface: 'terminal',
+    component: 'ToolUse',
+    props: { ...props, tool: 'SendUserFile', input: { files: ['/tmp/a.png', 'b.mp4'] } },
+  })
+  const drawn = JSON.stringify(await sent.find({ type: 'Markdown' }))
+  expect(drawn).toContain('file:///tmp/a.png')
+  expect(drawn).toContain('file:///work/b.mp4')
 })

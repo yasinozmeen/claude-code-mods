@@ -34,6 +34,7 @@ const isReady = atom({ plugin: 'vitrin', key: 'isReady' } as const, false)
 // What a button of the page asks the mod to do.
 type Act = { act?: string; id?: string; mode?: string; text?: string }
 
+const LABELS: Record<string, string> = { image: '[resim]', video: '[video]', audio: '[ses]', pdf: '[pdf]', page: '[sayfa]', doc: '[belge]' }
 const busy = new Set<string>()
 // Every file the pane has held this session: a reply's path to one stays a
 // link after the list is cleared, and a press brings the file back.
@@ -687,6 +688,70 @@ export const register: Register = on => {
         </Box>
       </Box>
     )
+  })
+
+  // A tool row that names media (a picture Claude read, files it sent) is
+  // drawn with the path pressable: a click shows the file in the pane, where
+  // the engine's own row would hand the path to the Finder. A row another
+  // mod has already drawn or folded away is left as that mod made it.
+  on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
+    const given = typeof e.props.input === 'object' && e.props.input !== null ? (e.props.input as Record<string, unknown>) : {}
+    const sent = e.props.tool === 'SendUserFile' && Array.isArray(given.files) ? given.files : []
+    const read = e.props.tool === 'Read' && typeof given.file_path === 'string' ? [given.file_path] : []
+    const files = [...sent, ...read].filter((one): one is string => typeof one === 'string')
+
+    if (e.surface !== 'terminal' || !files.some(file => kindOf(file) !== undefined)) {
+      return next(e)
+    }
+
+    const drawn = await next(e)
+
+    if (typeof drawn === 'object' && drawn !== null && 'type' in drawn && drawn.type === 'Box') {
+      return drawn
+    }
+
+    const { home, cwd } = place.home === '' ? await located($) : place
+    const { Box, Markdown, Text } = $.ui.resolve(e)
+    const links: string[] = []
+    const linkOf = (file: string) => {
+      const href = hrefOf(absolute(file, cwd, home))
+
+      if (kindOf(file) === undefined) {
+        return file
+      }
+
+      links.push(href)
+
+      return `[${file}](${href})`
+    }
+    const text =
+      e.props.tool === 'Read'
+        ? `**Read**(${linkOf(files[0] ?? '')})`
+        : files.map(file => `› ${LABELS[kindOf(file) ?? 'doc'] ?? 'dosya'} ${linkOf(file)}`).join('  \n')
+    const mark = e.props.isErrored ? { color: 'red' } : e.props.isRunning ? { dimColor: true } : { color: 'green' }
+
+    return (
+      <Box flexDirection="row">
+        <Text {...mark}>⏺ </Text>
+        <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+          <Markdown key="tool" text={text} pressableLinks={links} onLinkPress={link => void jump($, link.href)} />
+        </Box>
+      </Box>
+    )
+  })
+
+  // The files Claude sent are listed by the row above; the engine's own list
+  // of them under it would say the same twice.
+  on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
+    if (e.surface !== 'terminal' || e.props.tool !== 'SendUserFile' || e.props.isErrored) {
+      return next(e)
+    }
+
+    const drawn = await next(e)
+    const isMods = typeof drawn === 'object' && drawn !== null && 'type' in drawn && drawn.type === 'Box'
+    const { Box } = $.ui.resolve(e)
+
+    return isMods ? drawn : <Box />
   })
 
   // A reply that names media the pane holds is drawn with those paths as

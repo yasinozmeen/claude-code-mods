@@ -9,9 +9,6 @@ Claude Code modu. Uzun bir çalışmada asıl okunacak şeyi, yani yazıları ö
   gizlenmez. Araya yazı girince grup orada bölünür, yazı hiçbir zaman gizlenmez.
 - **Mesajları renklendirir.** Üç tür ayrı renk alır: senin mesajların, Claude'un
   iş arasında yazdıkları (ardından araç çalıştırdığı yazılar) ve kapanış mesajı.
-- **Mesajlar arasında atlar.** Yazı alanının üstündeki `↑ Ben`, `↓ Ben`,
-  `↑ Claude`, `↓ Claude` düğmeleri sohbeti o yöndeki en yakın mesaja kaydırır.
-  Satıra bir kez tıkladıktan sonra `1` `2` `3` `4` tuşları da aynı işi görür.
 
 ## Renk seçimi
 
@@ -51,6 +48,6 @@ claude plugin test .
 
 | Dosya | İçerik |
 | --- | --- |
-| `hooks/register.tsx` | Modun kendisi: katlama, renkler, panel, atlama |
+| `hooks/register.tsx` | Modun kendisi: katlama, renkler, panel |
 | `bin/sira.py` | Oturum kaydından mesaj ve araç sırasını çıkarır |
 | `types/index.d.ts` | Modun tuttuğu değerlerin tipleri |

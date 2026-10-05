@@ -35,21 +35,8 @@ const runs = atom({ plugin: 'vurgu', key: 'runs' } as const, [] as Run[])
 const open = atom({ plugin: 'vurgu', key: 'open' } as const, [] as string[])
 // True once something other than a tool call was drawn: the next call starts a run.
 const live = { isBroken: true }
-// Which highlighted rows the window shows now, and the row last jumped to.
-const shown = new Set<string>()
-const at = { id: '' }
-
-function note(id: string, isShown: boolean) {
-  if (isShown) {
-    shown.add(id)
-  } else {
-    shown.delete(id)
-  }
-}
-
-// The session's highlighted rows in transcript order, read from its stored
-// transcript: the window draws only the rows near it, so the drawing alone
-// does not know what lies above.
+// The session's prompts, reply texts and tool calls in transcript order,
+// read from its stored transcript: what was written before the mod loaded.
 async function ordered($: EngineInterface): Promise<Row[]> {
   try {
     const argv = ['/usr/bin/python3', `${$.plugin.root}/bin/sira.py`, await $.session.id()]
@@ -141,30 +128,6 @@ function shownText(text: string): string {
 
 async function toggle($: EngineInterface, head: string) {
   await update($, open, list => (list.includes(head) ? list.filter(one => one !== head) : [...list, head].slice(-200)))
-}
-
-// Brings the nearest row of `who` above (`step` -1) or below (1) the top of
-// the window to the window's top.
-async function jump($: EngineInterface, who: Who, step: -1 | 1) {
-  const rows = await ordered($)
-  const top = rows.findIndex(row => shown.has(row.id))
-  const last = rows.findIndex(row => row.id === at.id)
-  const from = top >= 0 ? top : last >= 0 ? last : rows.length
-  const of = rows.map((row, index) => ({ row, index })).filter(one => one.row.who === who)
-  const ahead = step < 0 ? of.filter(one => one.index < from).reverse() : of.filter(one => one.index > from)
-
-  // A row the transcript no longer draws (from before a summary) is passed over.
-  for (const next of ahead.slice(0, 12)) {
-    const moved = await $.ui.scroll({ to: { requestId: next.row.id }, block: 'start' })
-
-    if (moved.deny === undefined) {
-      at.id = next.row.id
-
-      return
-    }
-  }
-
-  $.ui.toast(step < 0 ? 'Daha yukarıda mesaj yok' : 'Daha aşağıda mesaj yok')
 }
 
 export const register: Register = on => {
@@ -350,7 +313,6 @@ export const register: Register = on => {
   // kind. The engine's own row may not be set inside a coloured box, so the
   // mod draws the row; a kind left without a colour stays the engine's.
   on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
-    note(e.requestId, e.props.onScreen != null)
     const tone = (await read($, colors)).ben
 
     if (e.surface !== 'terminal' || tone === '' || e.props.task !== undefined || e.props.from !== undefined) {
@@ -370,7 +332,6 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
-    note(e.requestId, e.props.onScreen != null)
     live.isBroken = true
     latest.id = e.requestId
     const now = await read($, colors)
@@ -398,24 +359,6 @@ export const register: Register = on => {
             </Box>
           </Box>
         )}
-      </Box>
-    )
-  })
-
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.surface !== 'terminal' || e.props.hasSurvey) {
-      return next(e)
-    }
-
-    const { Box, Button, Text } = $.ui.resolve(e)
-
-    return (
-      <Box flexDirection="row" columnGap={1}>
-        <Text dimColor>Atla:</Text>
-        <Button key="ben-up" label="↑ Ben" hotkey="1" onPress={() => jump($, 'ben', -1)} />
-        <Button key="ben-down" label="↓ Ben" hotkey="2" onPress={() => jump($, 'ben', 1)} />
-        <Button key="claude-up" label="↑ Claude" hotkey="3" onPress={() => jump($, 'claude', -1)} />
-        <Button key="claude-down" label="↓ Claude" hotkey="4" onPress={() => jump($, 'claude', 1)} />
       </Box>
     )
   })

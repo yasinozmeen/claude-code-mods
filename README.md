@@ -20,7 +20,7 @@ belgelerini terminalden çıkmadan sağdaki panelde gösterir.
 ### [Vurgu](vurgu/)
 
 Arka arkaya çalışan araçları tek satıra katlar, senin mesajlarını ve Claude'un
-yazılarını seçtiğin renkle vurgular, mesajlar arasında atlama düğmeleri ekler.
+yazılarını seçtiğin renkle vurgular.
 
 Ekran görüntüsü henüz eklenmedi.
 

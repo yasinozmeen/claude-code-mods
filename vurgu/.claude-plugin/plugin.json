@@ -1,6 +1,6 @@
 {
   "name": "vurgu",
   "version": "0.1.0",
-  "description": "Araçları tek satıra katlar, mesajları seçilen renkle vurgular, mesajlar arasında atlama düğmeleri ekler",
+  "description": "Araçları tek satıra katlar, mesajları seçilen renkle vurgular",
   "types": "./types/index.d.ts"
 }
